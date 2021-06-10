@@ -14,17 +14,18 @@ char currentUser[] = "root";
 // CREATE USER [nama_user] IDENTIFIED BY [password_user];
 // CREATE DATABASE [nama_database];
 // CREATE TABLE [nama_tabel] ([nama_kolom] [tipe_data], ...);
+// CREATE TABLE table2 (kolom1 string, kolom2 int, kolom3 string, kolom4 int);
 
 bool isRoot (char *user); 
 bool isCreate (char *command); //cheack if command is "CREATE"
 void toLower (char *str); //lower case a string
 int getOptCreate (char *opt); //get command option "COMMAND OPTION ..." -> get the option 1:user, 2:database, 3:table
-bool isIdentified (char *str);
-bool isBy (char *str);
+bool steqIdentified (char *str); //steqIdentified mean is a given string eq to 'identified'
+bool steqBy (char *str); //steqBy mean is a given string eq to 'by'
 
 int main () {
     if (isRoot(currentUser)) {
-        char input[] = "CREATE DATABASE db1";
+        char input[] = "CREATE TABLE table (kolom1 string, kolom2 int, kolom3 string, kolom4 int);";
         char *command = strtok(input, " ");
         char *opt = strtok(NULL, " ");
         if (isCreate(command)) {
@@ -41,7 +42,7 @@ int main () {
                     char *newPassword = strtok(NULL, "\0");
                     strcpy(username, newUsername);
                     strcpy(password, newPassword);
-                    if (isIdentified(tempId) && isBy(tempBy)) { //command valid
+                    if (steqIdentified(tempId) && steqBy(tempBy)) { //command valid
                         printf("username: %s\npassword: %s\n", username, password);
                     } else {
                         printf("error\n");
@@ -51,6 +52,7 @@ int main () {
                     *
                     */
                     break;
+
                 case 2:
                     printf("CREATE DATABASE:\n");
                     char database[20];
@@ -61,8 +63,27 @@ int main () {
                     *
                     */
                     break;
+                    
                 case 3:
                     printf("CREATE TABLE\n");
+                    char table[20];
+                    char *newTable = strtok(NULL, " ");
+                    char *columns = strtok(NULL, ";");
+                    char *newColumns = strtok(columns+1, ")");
+                    char *columnName[100];
+                    char *columnType[100];
+                    char *temp = strtok(newColumns, " ");
+                    int i=0;
+                    do {
+                        columnName[i] = temp;
+                        columnType[i++] = strtok(NULL, ",");
+                        temp = strtok(NULL, " ");
+                    } while(temp);
+                    for (int j=0; j<i; j++) {
+                        printf("kolom: %s\ntipe: %s\n\n", columnName[j], columnType[j]);
+                    }
+                    break;
+
                 default:
                     printf("error\n");
             }
@@ -90,7 +111,7 @@ bool isCreate (char *command) {
     return false;
 }
 
-bool isIdentified (char *str) {
+bool steqIdentified (char *str) {
     toLower(str);
     if (strcmp(str, "identified") == 0) {
         return true;
@@ -98,7 +119,7 @@ bool isIdentified (char *str) {
     return false;
 }
 
-bool isBy (char *str) {
+bool steqBy (char *str) {
     toLower(str);
     if (strcmp(str, "by") == 0) {
         return true;
