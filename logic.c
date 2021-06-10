@@ -68,10 +68,10 @@ int main () {
 				break;
 
 			case 2:;
-				printf("CREATE DATABASE:\n");
 				char database[20];
 				char *newDatabase = strtok(NULL, "\0");
 				strcpy(database, newDatabase);
+				printf("CREATE DATABASE:\n");
 				printf("database: %s\n", database);
 				/*here goes how to create database. use variable char database[20]; to get the database's name
 				*
@@ -79,16 +79,16 @@ int main () {
 				break;
 				
 			case 3:;
-				printf("CREATE TABLE");
 				char table[20];
 				char *newTable = strtok(NULL, " ");
-				strcpy(table, newTable);
-				printf(": %s\n", table);
 				char *columns = strtok(NULL, ";");
 				char *newColumns = strtok(columns+1, ")");
 				char *columnName[100];
 				char *columnType[100];
 				char *temp = strtok(newColumns, " ");
+				strcpy(table, newTable);
+				printf("CREATE TABLE");
+				printf(": %s\n", table);
 				int i=0;
 				do {
 					columnName[i] = temp;
@@ -114,13 +114,13 @@ int main () {
         } else if (isInsert(command)) {
 			char *into = strtok(NULL, " ");
 			if (steqInto(into)) {
-				char *getTable = strtok(NULL, " ");
 				char table[20];
-				strcpy(table, getTable);
+				char *value[100];
+				char *getTable = strtok(NULL, " ");
 				char *rawValues = strtok(NULL, ";");
 				char *values = strtok(rawValues+1, ")");
-				char *value[100];
 				char *temp = strtok(values, ",");
+				strcpy(table, getTable);
 				int i = 0;
 				do {
 					value[i++] = temp;
@@ -135,15 +135,15 @@ int main () {
 				*/
 			} else printf("INSERTING error\n");
 		} else if (isUpdate(command)) {
-			char *getTable = strtok(NULL, " ");
 			char table[20];
-			strcpy(table, getTable);
+			char column[100];
+			char newColumn[100];
+			char *getTable = strtok(NULL, " ");
 			char *set = strtok(NULL, " ");
 			char *getColumn = strtok(NULL, "=");
-			char column[100];
-			strcpy(column, getColumn);
 			char *getNewColumn = strtok(NULL, ";");
-			char newColumn[100];
+			strcpy(table, getTable);
+			strcpy(column, getColumn);
 			if (steqSet(set)) {
 				if (getNewColumn[0] == '\'') {
 					getNewColumn = strtok(getNewColumn+1, "\'");
