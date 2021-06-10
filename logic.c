@@ -30,7 +30,7 @@ int main () {
         char *opt = strtok(NULL, " ");
         if (isCreate(command)) {
             switch (getOptCreate(opt)) {
-                case 1:
+                case 1:;
                     printf("CREATE USER:\n");
                     char username[20];
                     char password[20];
@@ -53,7 +53,7 @@ int main () {
                     */
                     break;
 
-                case 2:
+                case 2:;
                     printf("CREATE DATABASE:\n");
                     char database[20];
                     char *newDatabase = strtok(NULL, "\0");
@@ -64,10 +64,12 @@ int main () {
                     */
                     break;
                     
-                case 3:
-                    printf("CREATE TABLE\n");
+                case 3:;
+                    printf("CREATE TABLE");
                     char table[20];
                     char *newTable = strtok(NULL, " ");
+                    strcpy(table, newTable);
+                    printf(": %s\n", table);
                     char *columns = strtok(NULL, ";");
                     char *newColumns = strtok(columns+1, ")");
                     char *columnName[100];
@@ -76,8 +78,13 @@ int main () {
                     int i=0;
                     do {
                         columnName[i] = temp;
-                        columnType[i++] = strtok(NULL, ",");
+                        columnType[i] = strtok(NULL, ",");
                         temp = strtok(NULL, " ");
+                        if (columnName[i]==NULL || columnType[i]==NULL) {
+                            printf("error\n");
+                            break;
+                        }
+                        i++;
                     } while(temp);
                     for (int j=0; j<i; j++) {
                         printf("kolom: %s\ntipe: %s\n\n", columnName[j], columnType[j]);
