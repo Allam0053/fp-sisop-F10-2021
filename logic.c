@@ -1,10 +1,3 @@
-/*allam
-gunakan code ini sebagai logic dari ddl
-jika mau pake file lain dipersilakan
-tapi untuk logic ddl sebisa mungkin 
-code nya readable
-*/
-
 #include <string.h>
 #include <stdbool.h>
 #include <ctype.h>
