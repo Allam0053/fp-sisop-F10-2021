@@ -27,10 +27,9 @@
 
 #define CREATE_DB 200
 #define CREATE_TABLE 201
-#define CREATE_TABLE 202
-#define DROP_DB 203
-#define DROP_TABLE 204
-#define DROP_COLUMN 205
+#define DROP_DB 202
+#define DROP_TABLE 203
+#define DROP_COLUMN 204
 
 #define INSERT 300
 #define UPDATE 301
@@ -156,11 +155,11 @@ void handle_connection(int client_socket, const char* user, const char* password
   is_db_connected = false;
   keep_connected = true;
 
-  while (keep_connected) {
-    char request[256];
-    char message[50];
-    int response;
+  char request[256];
+  char message[50];
+  int response;
 
+  while (keep_connected) {
     is_db_connected 
       ? printf("%s=%s -> ", connected_db, user)
       : printf("%s -> ", user);
