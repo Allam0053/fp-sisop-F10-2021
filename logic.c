@@ -10,6 +10,7 @@ char currentUser[] = "root";
 // CREATE TABLE table2 (kolom1 string, kolom2 int, kolom3 string, kolom4 int);
 // INSERT INTO table1 (‘abc’, 1, ‘bcd’, 2);
 // UPDATE table1 SET kolom1=’new_value1’;
+// [Command UPDATE, SELECT, DELETE] WHERE [nama_kolom]=[value];
 
 bool isRoot (char *user); 
 
@@ -104,7 +105,7 @@ int main () {
 			default:
 				printf("CREATING error\n");
             }
-        } else if (isInsert(command)) {
+        } else if (isInsert(command)) { //insert values
 			char *into = strtok(NULL, " ");
 			if (steqInto(into)) {
 				char table[20];
@@ -127,28 +128,41 @@ int main () {
 				*
 				*/
 			} else printf("INSERTING error\n");
-		} else if (isUpdate(command)) {
+		} else if (isUpdate(command)) { //update kolom
 			char table[20];
 			char column[100];
 			char newColumn[100];
+			char newValue[100];
 			char *getTable = strtok(NULL, " ");
-			char *set = strtok(NULL, " ");
+			char *opt = strtok(NULL, " ");
 			char *getColumn = strtok(NULL, "=");
 			char *getNewColumn = strtok(NULL, ";");
+			char *getNewValue;
 			strcpy(table, getTable);
 			strcpy(column, getColumn);
-			if (steqSet(set)) {
+			if (steqSet(opt)) { //update kolom. opt = set
 				if (getNewColumn[0] == '\'') {
 					getNewColumn = strtok(getNewColumn+1, "\'");
 					strcpy(newColumn, getNewColumn);
 				} else {
 					strcpy(newColumn, getNewColumn);
 				}
+				/*here goes how to update column. var: char table[20], char column[100]; char newColumn[100];
+				*
+				*/
+			} else if (steqWhere(opt)) { //update value. opt = where
+				if (getNewColumn[0] == '\'') {
+					getNewValue = strtok(getNewColumn+1, "\'");
+					strcpy(newValue, getNewValue);
+				} else {
+					strcpy(newValue, getNewValue);
+				}
+				/*here goes how to update value. var: char table[20], char column[100]; char newValue[100];
+				*
+				*/
 			} else printf("UPDATING error\n");
 			printf("UPDATE %s.%s to %s\n", table, column, newColumn);
-			/*here goes how to update column. var: char table[20], char column[100]; char newColumn[100];
-			*
-			*/
+			
 		} else if (isDelete(command)) {
 			char *from = strtok(NULL, " ");
 			char *getTable = strtok(NULL, "\0");
@@ -200,6 +214,14 @@ void toLower (char *str) {
         str[i] = tolower(str[i]);
     }
     return;
+}
+
+bool steqWhere (char *where) {
+	toLower(where);
+	if (strcmp(where, "where") == 0) {
+		return true;
+	}
+	return false;
 }
 
 // -- SELECT utilities --

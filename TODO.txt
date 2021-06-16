@@ -87,3 +87,29 @@ Setelah program dijalankan:
 
 16. Buat program bisa menerima input COMMAND SQL dari file
     => ./[program_client_database] -u [username] -p [password] -d [database] < [file_command]
+
+
+# Command-command
+
+- handler masing-masing
+USE <nama_db>;
+GRANT PERMISSION database1 INTO user1;
+INSERT INTO table1 ('string1’, 2, 'string2’, 4);
+UPDATE table1 SET kolom1=’new_value1’;
+DELETE FROM table1;
+
+- create_handler() => cabang lagi
+CREATE USER <nama user>;
+CREATE DATABASE <nama database>;
+CREATE TABLE [nama_tabel] ([nama_kolom] [tipe_data], ...);
+
+- drop_handler() => cabang lagi
+DROP DATABASE <nama db>;
+DROP TABLE <nama tabel>;
+DROP COLUMN <nama column> FROM <nama tabel>;
+
+- select_handler() => cabang lagi
+SELECT * FROM table1;
+SELECT kolom1, kolom2 FROM table1;
+
+[Command UPDATE, SELECT, DELETE] WHERE [nama_kolom]=[value];
