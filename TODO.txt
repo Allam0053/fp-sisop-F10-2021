@@ -19,7 +19,7 @@ Yang masih bingung:
 
 Setelah program dijalankan:
 3. Buat program agar bisa membuat user baru 
-    => CREATE USER <nama user>;
+    => CREATE USER <nama user> IDENTIFIED BY [password_user];
     Note:
     - CREATE USER hanya bisa dilakukan user 'root'
 
