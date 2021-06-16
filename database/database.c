@@ -10,17 +10,19 @@
 #include <limits.h>
 #include <libgen.h>
 #include <ctype.h>
+#include <dirent.h>
+#include <errno.h>
 
 #define SERVER_PORT 8080
-#define BYTES 1024
-#define NOT_FOUND 404
 #define BACKLOG 7
+
 #define BOOLEAN 1
 #define INTEGER 2
 #define STRING 3
 
 #define REJECTED -1
 #define FINISHED 0
+#define ACCEPTED 1
 
 #define CREATE_USER 100
 #define CONNECT_DB 101
@@ -37,55 +39,44 @@
 #define DELETE 302
 #define SELECT 303
 
-#define UPDATE_WHERE 400
-#define DELETE_WHERE 401
-#define SELECT_WHERE 402
-
-#define LOGOUT 1
-#define REGISTER 2
-#define LOGIN 3
-#define ADD 4
-#define DOWNLOAD 5
-#define DELETE 6
-#define SEE 7
-#define FIND 8
-
 int client_socket;
 bool is_root;
 bool keep_handling;
 char active_user[50];
 char active_db[50];
 
-// TODO: hapus logged_in, user_id, user_password
-bool logged_in;
-char user_id[50];
-char user_password[50];
-
 typedef struct sockaddr_in SA_IN;
 typedef struct sockaddr SA;
 
+/* Basic connection */
 int setup_server(short, int);
 int accept_new_connection(int);
+void check(int, char* );
 void handle_connection(int);
 
+/* Hanlder functions */
 int translate_request(const char* );
-void register_handler();
-void logout_handler();
-void login_handler();
-void add_handler();
-void download_handler();
+void connect_db_handler(const char* request);
+void create_db_handler(const char* request);
+void grant_permission_handler(const char* request);
+void insert_handler(const char* request);
+void update_handler();
 void delete_handler();
-void search_handler();
-void to_lower (char *str); //lower case a string
+void create_handler();
+void drop_db_handler(const char* request);
+void drop_table_handler(const char* request);
+void drop_column_handler(const char* request);
+void select_handler();
 
-off_t fsize(const char* );
-void save_session(char*, char* );
-void clear_session();
-void record_log(int, const char* );
+/* Helper functions */
+void get_user_password(char*, const char* );
+bool authenticate_user(const char*, const char* );
+bool is_user_has_db_access(const char* );
 void send_to_client(const void*, int);
 void read_from_client(void*, int, int);
+void record_log(int, const char* );
 int split_string(char [][100], char [], const char []);
-void check(int, char* );
+void to_lower (char *str);
 
 int main(int argc, char const *argv[]) {
   int server_socket = setup_server(SERVER_PORT, BACKLOG);
@@ -154,50 +145,35 @@ int accept_new_connection(int server_socket) {
   return client_socket;
 }
 
+void check(int result, char* error_message) {
+  const int ERROR = -1;
+  if (result != ERROR) return;
+
+  perror(error_message);
+  exit(EXIT_FAILURE);
+}
+
 void handle_connection(int client_socket) {
+  char request[256];
+  char user[50];
+  char password[50];
+
   read_from_client(&is_root, sizeof(is_root), BOOLEAN);
 
+  is_root ? strcpy(active_user, "root") : NULL;
   keep_handling = is_root;
 
   /* Authenticate for user */
   if (!is_root) {
-    // * Kalo bukan root harus diautentikasi dulu
-    char record_user[100];
-    char user[50];
-    char password[50];
-
     read_from_client(user, sizeof(user), STRING);
     read_from_client(password, sizeof(password), STRING);
-    
-    // Harus buka dari dari /database (jangan dari /fp)
-    FILE* users_table = fopen("./database/databases/db_user/users.csv", "r");
 
-    while (fgets(record_user, 100, users_table)) {
-      char record_user_column[3][100];
+    keep_handling = authenticate_user(user, password);
+    keep_handling ? strcpy(active_user, user) : NULL;
 
-      // remove '\n' character from fgets
-      record_user[strcspn(record_user, "\n")] = 0;  
-      split_string(record_user_column, record_user, ",");
-
-      printf("user: %s\tpassword: %s\n", record_user_column[0], record_user_column[1]);
-
-      // User exists
-      if (strcmp(record_user_column[0], user) == 0 && strcmp(record_user_column[1], password) == 0) {
-        keep_handling = true;
-        fclose(users_table);
-        break;
-      }
-    }
-
-    // Kirim status apakah authentication berhasil / tidak
     send_to_client(&keep_handling, BOOLEAN);
   }
-
-  // TODO: dihapus
-  logged_in = false;
-
-  char request[256];
-
+  
   // Kalau bukan root & gagal login -> keep_handling = false
   while (keep_handling) {
     printf("Waiting for request...\n");
@@ -246,20 +222,55 @@ int translate_request(const char* request) {
   return -1;
 }
 
+void create_user_handler(const char* request) {
+  char request_copy[256];
+  char new_user[256];
+  char splitted_request[6][100];
+
+  int response_code = CREATE_USER;
+  send_to_client(&response_code, INTEGER);
+
+  if (!is_root) {
+    char denied_message[50] = "Login as root to create user!";
+    send_to_client(denied_message, STRING);
+    return;
+  }
+
+  strcpy(request_copy, request);
+  split_string(splitted_request, request_copy, " ");
+  sprintf(new_user, "%s,%s,\n", splitted_request[2], splitted_request[5]);
+  
+  FILE* users_table = fopen("./database/databases/db_user/users.csv", "a");
+  char message[50] = "User created!";
+  
+  send_to_client(message, STRING);
+  fputs(new_user, users_table);
+  fclose(users_table);
+}
+
 void connect_db_handler(const char* request) {
   char request_copy[256];
-  char splitted[2][100];
+  char request_word[2][100];
   char success_message[50];
+  char record[256];
   char error_message[50] = "invalid connect to database syntax";
 
   strcpy(request_copy, request);
   to_lower(request_copy);
-  split_string(splitted, request_copy, " ");
+  split_string(request_word, request_copy, " ");
   
   int response = CONNECT_DB;
   send_to_client(&response, INTEGER);
   
-    
+  bool has_access = is_user_has_db_access(request_word[1]);
+  int status = has_access ? ACCEPTED : REJECTED;
+
+  send_to_client(&status, INTEGER);
+
+  if (!has_access) return;
+
+  strcpy(active_db, request_word[1]);
+  send_to_client(active_db, STRING);
 }
 
 void create_db_handler(const char* request) {
@@ -268,12 +279,12 @@ void create_db_handler(const char* request) {
   char success_message[50];
   char error_message[50] = "invalid create database syntax";
   
+  int response = CREATE_DB;
+  send_to_client(&response, INTEGER);
+
   strcpy(request_copy, request);
   to_lower(request_copy);
   split_string(split_string, request_copy, " ");
-  
-  int response = CREATE_DB;
-  send_to_client(&response, INTEGER);
 
   /* Error tests */
   if (strcmp(splitted[0], "create") != 0) {
@@ -299,87 +310,62 @@ void create_db_handler(const char* request) {
 }
 
 void grant_permission_handler(const char* request) {
-  // 'request harus di ekstrak-ekstrak
   // GRANT PERMISSION database1 INTO user1;
   char request_copy[256];
   char splitted[5][100];
   char success_message[50];
   char error_message[50] = "invalid grant permission syntax";
 
+  int res_code = GRANT_PERMISSION;
+  send_to_client(&res_code, INTEGER);
+
   strcpy(request_copy, request);
   to_lower(request_copy);
   split_string(split_string, request_copy, " ");
 
-  int response = GRANT_PERMISSION;
-  send_to_client(&response, INTEGER);
+  if (!is_root) {
+    char denied_message[50] = "Only root can grant permission!";
+    send_to_client(denied_message, STRING);
+    return;
+  }
   
   if (strcmp(splitted[0], "grant") != 0) {
     send_to_client(error_message, STRING);
     return;
   }
+
   if (strcmp(splitted[1], "permission") != 0){
     send_to_client(error_message, STRING);
     return;
   }
+
   if (strcmp(splitted[3], "into") != 0){
     send_to_client(error_message, STRING);
     return;
   }
 
   /* Get password */
-  char record_data[256];
-  char pswd[50];
-  bool is_user_exists = false;
-  
-  FILE* users_table = fopen("./database/databases/db_user/users.csv", "r");
-
-  while (fgets(record_data, 256, users_table)) {
-    char splitted_record[3][100];
-    
-    record_data[strcspn(record_data, "\n")] = 0;
-    split_string(splitted_record, record_data, ",");
-    
-    if (strcmp(splitted[4], splitted_record[0]) == 0) {
-      is_user_exists = true;
-      strcpy(pswd, splitted_record[1]);
-      
-      if (strcmp(splitted[2], splitted_record[2]) == 0) {
-        char to_client_message[50] = "user has already access!";
-        
-        send_to_client(to_client_message, STRING);
-        fclose(users_table);
-
-        return;
-      }
-    }
-  }
-
-  fclose(users_table);
-
-  if (!is_user_exists) {
-    char to_client_message[50] = "user has already access!";
-    send_to_client(to_client_message, STRING);
-    return;
-  }
+  char password[50];
+  get_user_password(password, splitted[4]);
 
   /* Add to users db */
-  char to_client_message[50] = "user has access now";
+  char message[50] = "user has access now";
   char new_user_access[256];
 
-  users_table = fopen("./database/databases/db_user/users.csv", "a");
-  sprintf(new_user_access, "%s,%s,%s", splitted[4], pswd, splitted[2]);
+  FILE* users_table = fopen("./database/databases/db_user/users.csv", "a");
+  sprintf(new_user_access, "%s,%s,%s\n", splitted[4], password, splitted[2]);
   fputs(new_user_access, users_table);
 
   fclose(users_table);
 
-  send_to_client(to_client_message, STRING);
+  send_to_client(message, STRING);
 }
 
 void insert_handler(const char* request) {
   // INSERT INTO table1 (‘value1’, 2, ‘value3’, 4);
   char request_copy[256];
   char splitted[50][100];
-  char success_message[50];
+  char success_message[50] = "Success inserting value";
   char error_message[50] = "invalid insert permission syntax";
 
   strcpy(request_copy, request);
@@ -398,17 +384,144 @@ void insert_handler(const char* request) {
     return;
   }
   
+  char path[256];
+  char type_data[50][100];
+  char columns[256];
+  char input[500];
+  sprintf(path, "./database/databases/%s/%s.csv", active_db, splitted[2]);
+  FILE* table = fopen(path, "a");
+
+  fgets(columns, 256, table); strcpy(columns, ""); //mau ambil type data tapi malah dapet nama kolom
+  fgets(columns, 256, table); //ambil type_data
+  split_string(type_data, columns, ", \n");
+
   int i = 3;
+  int j = 0;
+  bool flag = true;
   while (1) {
-    if (strcmp(splitted[i], "") != 0) {
-      //masukkan
+    if (strcmp(splitted[i], "") != 0 && strcmp(type_data[j], "") != 0) {
+      if (strcmp(splitted[i][0], "'") == 0) {
+        if (strcmp(type_data[j], "string") == 0) {
+          flag = true;
+        } else { 
+          flag = false;
+          break;
+        }
+      } else {
+        if (strcmp(type_data[j], "int") == 0) {
+          flag = true;
+        } else { 
+          flag = false;
+          break;
+        }
+      }
+    } else {
+      flag = false;
+      break;
     }
+    strcat(input, splitted[i]);
+    strcat(input, ",");
     i++;
+    j++;
   }
+  
+  if (flag) {
+    input[strlen(input) - 1] = '\n';
+    fputs(input, table);
+    send_to_client(success_message, STRING);
+  } else {
+    send_to_client(error_message, STRING);
+  }
+
+  return;
 }
 
-void update_handler() {
+void update_handler(const char* request) {
+  // UPDATE table1 SET kolom1='new_value1';
+  // UPDATE table1 SET kolom1='new_value1' WHERE kolomx = 'certain_value';
   
+  char request_copy[256];
+  char splitted[50][100];
+  char success_message[] = "Success update value";
+  char error_message[] = "invalid update syntax";
+
+  strcpy(request_copy, request);
+  to_lower(request_copy);
+  split_string(splitted, request_copy, " ,=();");
+
+  int response = UPDATE;
+  send_to_client(&response, INTEGER);
+
+  if (strcmp(splitted[0], "update") != 0) {
+    send_to_client(error_message, STRING);
+    return;
+  }
+  if (strcmp(splitted[2], "set") != 0) {
+    send_to_client(error_message, STRING);
+    return;
+  }
+
+  char path[256];
+  char new_path[256];
+  char type_data[50][100];
+  char columns[256];
+  char copy_columns[256];
+  char splitted_columns[50][100];
+  char input[500];
+  sprintf(path, "./database/databases/%s/%s.csv", active_db, splitted[1]);
+  sprintf(path, "./database/databases/%s/new-%s.csv", active_db, splitted[1]);
+
+  FILE* table_read = fopen(path, "r");
+  FILE* table_write = fopen(new_path, "w");
+
+  fgets(columns, 256, table_read);
+  if (!strstr(columns, splitted[3])) {
+    send_to_client(error_message, STRING);
+    return;
+  }
+  fputs(columns, table_write);
+  strcpy(copy_columns, columns);
+  split_string(splitted_columns, copy_columns, ", \n");
+  int i = 0;
+  while (strcmp(splitted_columns[i++], splitted[3]) != 0);
+  i--;
+
+  fgets(columns, 256, table_read);
+  fputs(columns, table_write);
+  
+  //jika ketambahan where
+  if (strcmp(splitted[5], "where") == 0) {
+    int index_where = 0;
+    while (strcmp(splitted_columns[index_where++], splitted[6]) != 0); index_where--;
+    while(fgets(columns, 256, table_read)) {
+      char record_column[20][100];
+      columns[strcspn(columns, "\n")] = 0;  
+      int total_columns = split_string(record_column, columns, ",");
+
+      if (strcmp(record_column[index_where], splitted[7])) {
+        strcpy(record_column[i], splitted[4]);
+      }
+      int j = 0;
+      while (j < total_columns) {
+        fputs(record_column[j++], table_write);
+        j < total_columns - 1 ? fputs(",", table_write) : fputs("\n", table_write);
+      }
+    }
+  } else {
+    while(fgets(columns, 256, table_read)) {
+      char record_column[20][100];
+      
+      columns[strcspn(columns, "\n")] = 0;  
+      int total_columns = split_string(record_column, columns, ",");
+
+      strcpy(record_column[i], splitted[4]);
+      int j = 0;
+      while (j < total_columns) {
+        fputs(record_column[j++], table_write);
+        j < total_columns - 1 ? fputs(",", table_write) : fputs("\n", table_write);
+      }
+    }
+  }
 }
 
 void delete_handler() {
@@ -419,344 +532,193 @@ void create_handler() {
 
 }
 
-void drop_handler() {
+void drop_db_handler(const char* request) {
+  char cpy_req[256];
+  char req_split[3][100];
+  char db_path[PATH_MAX];
 
-}
+  int res_code = DROP_DB;
+  send_to_client(&res_code, INTEGER);
 
-void select_handler() {
+  strcpy(cpy_req, request);
+  split_string(req_split, cpy_req, " ");
 
-}
-
-
-void logout_handler() {
-  keep_handling = false;
-  clear_session();
-}
-
-void register_handler() {
-  char success_message[25] = "Account created";
-  char id[50];
-  char password[50];
-  char account_data[100];
-
-  printf("Reading id & password...\n");
-
-  read_from_client(id, sizeof(id), STRING);
-  read_from_client(password, sizeof(password), STRING);
-
-  strcpy(account_data, id);
-  strcat(account_data, ":");
-  strcat(account_data, password);
-  strcat(account_data, "\n");
-
-  FILE* fp = fopen("./akun.txt", "a");
-  fputs(account_data, fp);
-  fclose(fp);
-
-  send_to_client(success_message, STRING);
-}
-
-void login_handler() {
-  send_to_client(&logged_in, BOOLEAN);
-  if (logged_in) return;
-
-  char success_message[50] = "Now you're logged in!";
-  char failed_message[50] = "Incorrect id or password!";
-  char id[50];
-  char password[50];
-
-  read_from_client(id, sizeof(id), STRING);
-  read_from_client(password, sizeof(password), STRING);
-
-  FILE* account_file = fopen("./akun.txt", "r");
-  char data[256];
-  char account[2][100];
-
-  if (account_file == NULL) {
-    FILE* create_account_file = fopen("./akun.txt", "a");
-    fclose(create_account_file);
-
-    account_file = fopen("./akun.txt", "r");
-  }
-
-  /* Iterating akun.txt */
-  while (fgets(data, 256, account_file)) {
-    data[strcspn(data, "\n")] = 0;  /* remove '\n' character from fgets */
-    split_string(account, data, ":");
-
-    const int ID = 0;
-    const int PASS = 1;
-
-    if (strcmp(id, account[ID]) == 0 && strcmp(password, account[PASS]) == 0) {
-      logged_in = true;
-      save_session(id, password);
-      break;
-    }
-  }
-
-  fclose(account_file);
-
-  logged_in 
-    ? send_to_client(success_message, STRING)
-    : send_to_client(failed_message, STRING);
-}
-
-void add_handler() {
-  send_to_client(&logged_in, BOOLEAN);
-
-  if (!logged_in) return;
-
-  int client_file_status;
-  read_from_client(&client_file_status, sizeof(client_file_status), INTEGER);
-
-  if (client_file_status == NOT_FOUND) return;
-
-  int CHUNK_SIZE = 1 * BYTES;
-  int total_recieved_size = 0;
-  int bytes_read;
-  char chunk[CHUNK_SIZE];
-  char record_data[1024];
-  int file_size;
-
-  char publisher[50];
-  char tahun[10];
-  char file_name[50];
-  char file_path[PATH_MAX];
-
-  read_from_client(publisher, sizeof(publisher), STRING);
-  read_from_client(tahun, sizeof(tahun), STRING);
-  read_from_client(file_name, sizeof(file_name), STRING);
-
-  sprintf(file_path, "./FILES/%s", file_name);
-
-  FILE* database_file = fopen("./files.tsv", "a");
-  FILE* destination_file = fopen(file_path, "wb");
-
-  if (database_file == NULL || destination_file == NULL) {
-    printf("Error open file!\n");
+  bool has_access = is_user_has_db_access(req_split[2]);
+  
+  if (!has_access) {
+    char denied_message[50] = "Database access denied!";
+    send_to_client(denied_message, STRING);
     return;
   }
 
-  sprintf(record_data, "%s\t%s\t%s\n", file_path, tahun, publisher);
-  fputs(record_data, database_file);
+  strcpy(db_path, "./database/databases/");
+  strcat(db_path, req_split[2]);
 
-  read_from_client(&file_size, sizeof(file_size), INTEGER);
+  DIR* dir = opendir("mydir");
+  
+  if (dir) {
+    /* Directory exists. */
+    FILE* users_table_read = fopen("./database/databases/db_user/users.csv", "r");
+    FILE* users_table_write = fopen("./database/databases/db_user/new-users.csv", "w");
 
-  double x;
-  double y = (double) file_size;
+    char record[256];
+    while (fgets(record, 256, users_table_read)) {
+      char column[5][100];
+      char copy_record[256];
 
-  /* Proses utama menerima file dari client */
-  do {
-    bzero(chunk, CHUNK_SIZE);
-    read(client_socket, &bytes_read, sizeof(int));
-    read(client_socket, chunk, bytes_read);
-    fwrite(chunk, 1, bytes_read, destination_file);
+      strcpy(copy_record, record);
+      
+      record[strcspn(record, "\n")] = 0;
 
-    total_recieved_size += bytes_read;
-    x = (double) total_recieved_size;
+      split_string(column, copy_record, ",");
 
-    printf("recieved: %.1lf%%\r", 100 * x / y);
-  } while (bytes_read >= CHUNK_SIZE);
+      if (strcmp(column[2], req_split[2]) == 0) continue;
 
-  fclose(database_file);
-  fclose(destination_file);
-
-  printf("downloaded: 100%%\n");
-  printf("File (%.1lf MB) was recieved from client.\n", x / 1000000);
-
-  record_log(ADD, file_name);
+      fputs(column, users_table_write);
+    }
+    
+    rmdir(db_path);
+    
+    closedir(dir);
+  } else if (ENOENT == errno) {
+    /* Directory does not exist. */
+  } else {
+    /* opendir() failed for some other reason. */
+  }
 }
 
-void download_handler() {
-  send_to_client(&logged_in, BOOLEAN);
+void select_handler(const char* request) {
+  // SELECT * FROM table1;
+  // SELECT kolom1, kolom2 FROM table1;
+  // SELECT kolom1, kolom2 FROM table1 WHERE kolomx = 'certain_value';
 
-  if (!logged_in) return;
+  char request_copy[256];
+  char splitted[50][100];
+  char success_message[] = "Success select value";
+  char error_message[] = "invalid select syntax";
 
-  bool file_available = false;
-  FILE* database_file = fopen("./files.tsv", "r");
-  char file_path[100];
-  char information[256];
-  char requested_file[100];
-  char records[3][100];
+  strcpy(request_copy, request);
+  to_lower(request_copy);
+  int size_command = split_string(splitted, request_copy, " ,=();");
 
-  read_from_client(requested_file, sizeof(requested_file), STRING);
-  sprintf(file_path, "./FILES/%s", requested_file);
+  int response = SELECT;
+  send_to_client(&response, INTEGER);
 
-  /* Iterating files.tsv */
-  while (fgets(information, 256, database_file) != NULL) {
-    information[strcspn(information, "\n")] = 0; /* remove '\n' character from fgets */
-    split_string(records, information, "\t");
-
-    if (strcmp(file_path, records[0]) == 0) {
-      printf("File available: (%s) (%s)\n", file_path, records[0]);
-      file_available = true;
-      break;
-    }
-  }
-
-  send_to_client(&file_available, BOOLEAN);
-  if (!file_available) return;
-
-  FILE* source_file = fopen(file_path, "rb");
-
-  if (source_file == NULL) {
-    printf("Failed opening file!\n");
+  if (strcmp(splitted[0], "select") != 0) {
+    send_to_client(error_message, STRING);
     return;
   }
 
-  int CHUNK_SIZE = 1 * BYTES;
-  int total_read_size = 0;
-  unsigned char chunk[CHUNK_SIZE];
-  int file_size = (int) fsize(file_path);
+  int i = 1;
+  bool where = false;
+  while (strcmp(splitted[++i], "from") != 0); i--;
 
-  send_to_client(&file_size, INTEGER);
+  if (strcmp(splitted[i+3], "where") == 0) {
+    where = true;
+  }
 
-  double x;
-  double y = (double) file_size;
+  char path[256];
+  sprintf(path, "./database/databases/%s/%s.csv", active_db, splitted[1]);
 
-  while (!feof(source_file)) {
-    int bytes_read = fread(chunk, 1, CHUNK_SIZE, source_file);
-    send(client_socket, &bytes_read, sizeof(int), 0);
-    send(client_socket, chunk, bytes_read, 0);
-
-    total_read_size += bytes_read;
-    x = (double) total_read_size;
-
-    printf("sent: %.1lf%%\r", 100 * x / y);
+  FILE* table_read = fopen(path, "r");
+  char columns[256];
+  char record_column[20][100];
+  fgets(columns, 256, table_read);
+  columns[strcspn(columns, "\n")] = 0;
+  int total_columns = split_string(record_column, columns, ",");
+  for (int k = i; k > 0; k--) {
+    while (1); //cek cari kolom yang diselect
   }
   
-  fclose(source_file);
-  printf("sent: 100%%\n");
-  printf("File (%d bytes) was successfully sent!\n", total_read_size);
-}
-
-void delete_handler() {
-  send_to_client(&logged_in, BOOLEAN);
-
-  if (!logged_in) return;
-
-  FILE* old_database_file = fopen("./files.tsv", "r");
-  FILE* new_database_file = fopen("./new-files.tsv", "w");
-
-  bool file_available = false;
-  int requested_file_length = 0;
-  char file_path[100];
-  char new_file_path[100];
-  char information[256];
-  char copy_information[256];
-  char requested_file[100];
-  char filename[100];
-  char records[3][100];
-
-  read_from_client(requested_file, sizeof(requested_file), STRING);
-  strcpy(filename, requested_file);
-
-  // printf("deleted filename: %s\n", filename);
-
-  sprintf(file_path, "./FILES/%s", requested_file);
-  sprintf(new_file_path, "./FILES/old-%s", requested_file);
-
-  // printf("deleted filename: %s\n", filename);
-
-  /* Iterating files.tsv */
-  while (fgets(information, 256, old_database_file) != NULL) {
-    strcpy(copy_information, information);
-
-    /* remove '\n' character from fgets */
-    information[strcspn(information, "\n")] = 0;
-
-    split_string(records, information, "\t");
-
-    if (strcmp(file_path, records[0]) == 0) {
-      printf("File available: (%s) (%s)\n", file_path, records[0]);
-      file_available = true;
-      continue;
-    }
-
-    fputs(copy_information, new_database_file);
-  }
-
-  // printf("deleted filename: %s\n", filename);
-
-  send_to_client(&file_available, BOOLEAN);
-
-  fclose(old_database_file);
-  fclose(new_database_file);
-
-  if (!file_available) {
-    remove("./new-files.tsv");
-    return;
-  }
-
-  remove("./files.tsv");
-  rename("./new-files.tsv", "./files.tsv");
-  rename(file_path, new_file_path);
-
-  strcpy(filename, basename(file_path));
-  record_log(DELETE, filename);
-}
-
-void search_handler() {
-  send_to_client(&logged_in, BOOLEAN);
   
-  if (!logged_in) return;
-
-  char information[256];
-  bool keep_read = false;
-  FILE* database_file = fopen("./files.tsv", "r");
-
-  do {
-    keep_read = fgets(information, 256, database_file);
-    information[strcspn(information, "\n")] = 0;
-
-    send_to_client(&keep_read, BOOLEAN);
+  while(fgets(columns, 256, table_read)) {
+    char record_column[20][100];
     
-    if (!keep_read) break;
+    columns[strcspn(columns, "\n")] = 0;  
+    int total_columns = split_string(record_column, columns, ",");
+
+    strcpy(record_column[i], splitted[4]);
+    int j = 0;
+    while (j < total_columns) {
+      fputs(record_column[j++], table_write);
+      j < total_columns - 1 ? fputs(",", table_write) : fputs("\n", table_write);
+    }
+  }
+}
+
+void get_user_password(char* password, const char* username) {
+  char record[256];
+  FILE* users_table = fopen("./database/databases/db_user/users.csv", "r");
+
+  while (fgets(record, 256, users_table)) {
+    char record_column[3][100];
+
+    // remove '\n' character from fgets
+    record[strcspn(record, "\n")] = 0;  
+    split_string(record_column, record, ",");
     
-    send_to_client(information, STRING);
-  } while (keep_read);
-
-  fclose(database_file);
-}
-
-off_t fsize(const char *filename) {
-  struct stat st; 
-
-  if (stat(filename, &st) == 0) return st.st_size;
-  return -1; 
-}
-
-void save_session(char* id, char* password) {
-  strcpy(user_id, id);
-  strcpy(user_password, password);
-}
-
-void clear_session() {
-  bzero(user_id, 50);
-  bzero(user_password, 50);
-}
-
-void record_log(int mode, const char* filename) {
-  FILE* log = fopen("./running.log", "a");
-  char log_format[256];
-  bzero(log_format, 256);
-
-  switch (mode) {
-    case ADD:
-      sprintf(log_format, "Tambah : %s (%s:%s)\n", filename, user_id, user_password);
-      break;
-
-    case DELETE:
-      sprintf(log_format, "Hapus : %s (%s:%s)\n", filename, user_id, user_password);
-      break;
-
-    default:
-      printf("Unknown log mode!\n");
-      break;
+    if (strcmp(record_column[0], username) == 0) {
+      strcpy(password, record_column[1]);
+      fclose(users_table);
+      return;
+    }
   }
 
-  fputs(log_format, log);
-  fclose(log);
+  strcpy(password, "\0");
+  fclose(users_table);
+}
+
+bool authenticate_user(const char* username, const char* password) {
+  char record[256];
+  
+  // Harus buka dari dari /database (jangan dari /fp)
+  FILE* users_table = fopen("./database/databases/db_user/users.csv", "r");
+
+  while (fgets(record, 256, users_table)) {
+    char record_column[3][100];
+
+    // remove '\n' character from fgets
+    record[strcspn(record, "\n")] = 0;  
+    split_string(record_column, record, ",");
+
+    // Case user exists
+    if (
+      strcmp(record_column[0], username) == 0  
+      && strcmp(record_column[1], password) == 0
+    ) {
+      fclose(users_table);
+      return true;
+    }
+  }
+
+  fclose(users_table);
+  return false;
+}
+
+bool is_user_has_db_access(const char* db_name) {
+  char record[256];
+  
+  FILE* users_table = fopen("./database/databases/db_user/users.csv", "r");
+
+  while (fgets(record, 256, users_table)) {
+    char record_column[3][100];
+
+    // remove '\n' character from fgets
+    record[strcspn(record, "\n")] = 0;  
+    split_string(record_column, record, ",");
+
+    // Case user has access
+    if (
+      strcmp(record_column[0], active_user) == 0 
+      && strcmp(record_column[2], db_name) == 0 
+    ) {
+      fclose(users_table);
+      return true;
+    }
+  }
+
+  fclose(users_table);
+  return false;
 }
 
 void send_to_client(const void* data, int mode) {
@@ -805,6 +767,29 @@ void read_from_client(void* data, int data_size, int mode) {
   }
 }
 
+void record_log(int mode, const char* filename) {
+  FILE* log = fopen("./running.log", "a");
+  char log_format[256];
+  bzero(log_format, 256);
+  /* 
+  switch (mode) {
+    case ADD:
+      sprintf(log_format, "Tambah : %s (%s:%s)\n", filename, user_id, user_password);
+      break;
+
+    case DELETE:
+      sprintf(log_format, "Hapus : %s (%s:%s)\n", filename, user_id, user_password);
+      break;
+
+    default:
+      printf("Unknown log mode!\n");
+      break;
+  }
+  */
+  fputs(log_format, log);
+  fclose(log);
+}
+
 int split_string(char splitted[][100], char origin[], const char delimiter[]) {
   int i = 0;
   char* token = strtok(origin, delimiter);
@@ -817,17 +802,9 @@ int split_string(char splitted[][100], char origin[], const char delimiter[]) {
   return i;
 }
 
-void check(int result, char* error_message) {
-  const int ERROR = -1;
-  if (result != ERROR) return;
-
-  perror(error_message);
-  exit(EXIT_FAILURE);
-}
-
 void to_lower (char *str) {    
-    for (int i = 0; str[i]; i++) {
-        str[i] = tolower(str[i]);
-    }
-    return;
+  for (int i = 0; str[i]; i++) {
+    str[i] = tolower(str[i]);
+  }
+  return;
 }
