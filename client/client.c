@@ -137,6 +137,7 @@ void handle_connection(int client_socket, const char* user, const char* password
   }
   
   strcpy(connected_db, "");
+  
   is_db_connected = false;
   keep_connected = true;
 
@@ -210,7 +211,7 @@ void connect_db_handler() {
 
 void select_handler() {
   int status;
-  int rows;
+  bool keep_reading = false;
   char record[256];
 
   read_from_server(&status, sizeof(status), INTEGER);
@@ -220,12 +221,14 @@ void select_handler() {
     return;
   }
   
-  read_from_server(&rows, sizeof(rows), INTEGER);
+  do {
+    read_from_server(&keep_reading, sizeof(keep_reading), BOOLEAN);
 
-  for (int i = 0; i < rows; i++) {
+    if (!keep_reading) break;
+
     read_from_server(record, sizeof(record), STRING);
     printf("%s\n", record);
-  }
+  } while (keep_reading);
 }
 
 int translate_request(const char* request) {
