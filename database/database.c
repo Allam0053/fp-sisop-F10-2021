@@ -47,6 +47,12 @@ char active_db[50];
 
 typedef struct sockaddr_in SA_IN;
 typedef struct sockaddr SA;
+struct where{
+  bool on;
+  char asked_column[100];
+  int table_column_index;
+  char value[100];
+}
 
 /* Basic connection */
 int setup_server(short, int);
@@ -60,13 +66,13 @@ void connect_db_handler(const char* request);
 void create_db_handler(const char* request);
 void grant_permission_handler(const char* request);
 void insert_handler(const char* request);
-void update_handler();
-void delete_handler();
-void create_handler();
+void update_handler(const char* request);
+void delete_handler(const char* request);
+void create_handler(const char* request);
 void drop_db_handler(const char* request);
 void drop_table_handler(const char* request);
 void drop_column_handler(const char* request);
-void select_handler();
+void select_handler(const char* request);
 
 /* Helper functions */
 void get_user_password(char*, const char* );
@@ -522,10 +528,83 @@ void update_handler(const char* request) {
       }
     }
   }
+
+  //rename new-db
+  /*
+   *
+   */
 }
 
-void delete_handler() {
+void delete_handler(const char* request) {
+  // DELETE FROM table1;
+  // DELETE FROM table1 WHERE kolom1=’value1’;
 
+  char request_copy[256];
+  char splitted[50][100];
+  char success_message[] = "Success delete value";
+  char error_message[] = "invalid delete syntax";
+
+  strcpy(request_copy, request);
+  to_lower(request_copy);
+  split_string(splitted, request_copy, " ,=();");
+
+  int response = UPDATE;
+  send_to_client(&response, INTEGER);
+
+  if (strcmp(splitted[0], "delete") != 0) {
+    send_to_client(error_message, STRING);
+    return;
+  }
+  if (strcmp(splitted[2], "from") != 0) {
+    send_to_client(error_message, STRING);
+    return;
+  }
+
+  char path[256];
+  char new_path[256];
+  sprintf(path, "./database/databases/%s/%s.csv", active_db, splitted[2]);
+  sprintf(path, "./database/databases/%s/new-%s.csv", active_db, splitted[2]);
+
+  FILE* table_read = fopen(path, "r");
+  FILE* table_write = fopen(new_path, "w");
+  char columns[256], cpy_column[256];
+  char record_column[50][100];
+  fgets(columns, 256, table_read);
+  strcpy(cpy_column, columns);
+  columns[strcspn(columns, "\n")] = 0;
+  int total_columns = split_string(record_column, columns, ",");
+
+  where condition;
+  condition.on = false;
+  if (strcmp(splitted[3], "where") == 0) {
+    condition.on = true;
+    strcpy(condition.column, splitted[4]);
+    strcpy(condition.value, splitted[5]);
+    for (int it1 = 0; it1 <= total_columns; it1++) { //cari kolom
+      if (strcmp(condition.column, record_column[it1]) == 0) {
+        condition.table_column_index = it1;
+        break;
+      }
+    }
+  }
+  
+  fputs(cpy_columns, table_write);
+  if (condition.on) {
+    while (fgets(columns, 256, table_read)) {
+      char splitted_column[50][100];
+      char selected[50][100];
+      
+      strcpy(cpy_column, columns);
+      columns[strcspn(columns, "\n")] = 0;  
+      int total_columns = split_string(splitted_column, columns, ",");
+      if (strcmp(splitted_column[condition.table_column_index], condition.value) != 0) { //menghapus yang tidak sama
+        fputs(cpy_column, table_write);
+      }
+    }
+  }
+
+  send_to_client(success_message, STRING);
+  return;
 }
 
 void create_handler() {
@@ -611,38 +690,83 @@ void select_handler(const char* request) {
 
   int i = 1;
   bool where = false;
+  int where_column = -1;
   while (strcmp(splitted[++i], "from") != 0); i--;
-
-  if (strcmp(splitted[i+3], "where") == 0) {
-    where = true;
-  }
 
   char path[256];
   sprintf(path, "./database/databases/%s/%s.csv", active_db, splitted[1]);
 
   FILE* table_read = fopen(path, "r");
+  int indexes[50];
   char columns[256];
-  char record_column[20][100];
+  char record_column[50][100];
   fgets(columns, 256, table_read);
   columns[strcspn(columns, "\n")] = 0;
   int total_columns = split_string(record_column, columns, ",");
-  for (int k = i; k > 0; k--) {
-    while (1); //cek cari kolom yang diselect
+  int it3 = 0;
+  
+  /* ambil index kolom yang dibutuhkan, disimpan di int indexes[50] */
+  if (strcmp(splitted[1], "*") == 0) {
+    for (int it2 = 0; it2 <= total_columns; it2++) {
+      indexes[it3++] = it2;
+    }
+  } else {
+    for (int it1 = 1; it1 <= i; it1--) {
+      for (int it2 = 0; it2 <= total_columns; it2++) {
+        if (strcmp(splitted[it1], record_column[it2]) == 0) {
+          indexes[it3++] = it2;
+        }
+      }
+    }
   }
-  
-  
+
+  where condition;
+  condition.on = false;
+  if (strcmp(splitted[i + 3], "where") == 0) {
+    condition.on = true;
+    strcpy(condition.column, splitted[i + 4]);
+    strcpy(condition.value, splitted[i + 5]);
+    for (int it1 = 0; it1 <= total_columns; it1++) {
+      if (strcmp(condition.column, record_column[it1]) == 0) {
+        condition.table_column_index = it1;
+        break;
+      }
+    }
+  }
+
+  //send nama kolom
+  /* format??
+   *
+   */
   while(fgets(columns, 256, table_read)) {
-    char record_column[20][100];
+    char splitted_column[50][100];
+    char selected[50][100];
     
     columns[strcspn(columns, "\n")] = 0;  
-    int total_columns = split_string(record_column, columns, ",");
+    int total_columns = split_string(splitted_column, columns, ",");
 
-    strcpy(record_column[i], splitted[4]);
-    int j = 0;
-    while (j < total_columns) {
-      fputs(record_column[j++], table_write);
-      j < total_columns - 1 ? fputs(",", table_write) : fputs("\n", table_write);
+    /* ambil yang diminta, taruh di char selected[50][100]*/
+    if (condition.on) {
+      if (strcmp(splitted_column[condition.table_column_index], condition.value)) {
+        for (int it1 = 0; it1 <= it3; it1++) {
+          strcpy(selected[it1], splitted_column[indexes[it1]]);
+        }
+        //send value data
+        /*
+        *
+        */
+      }
+    } else {
+      for (int it1 = 0; it1 <= it3; it1++) {
+        strcpy(selected[it1], splitted_column[indexes[it1]]);
+      }
+      //send value data
+      /*
+      *
+      */
     }
+    
+    
   }
 }
 

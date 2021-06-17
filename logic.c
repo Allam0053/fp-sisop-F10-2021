@@ -38,72 +38,72 @@ int main () {
         if (isCreate(command)) {
         	char *opt = strtok(NULL, " ");
             switch (getOptCreate(opt)) {
-			case 1:;
-				printf("CREATE USER:\n");
-				char username[20];
-				char password[20];
-				char identified[15];
-				char by[5];
-				char *newUsername = strtok(NULL, " ");
-				char *tempId = strtok(NULL, " ");
-				char *tempBy = strtok(NULL, " ");
-				char *newPassword = strtok(NULL, ";");
-				strcpy(username, newUsername);
-				strcpy(password, newPassword);
-				if (steqIdentified(tempId) && steqBy(tempBy)) { //command valid
-					printf("username: %s\npassword: %s\n", username, password);
-				} else {
-					printf("error\n");
-					break;
-				}
-				/*here goes how to create user. use variable char username[20]; char password[20];
-				*
-				*/
-				break;
+						case 1:;
+							printf("CREATE USER:\n");
+							char username[20];
+							char password[20];
+							char identified[15];
+							char by[5];
+							char *newUsername = strtok(NULL, " ");
+							char *tempId = strtok(NULL, " ");
+							char *tempBy = strtok(NULL, " ");
+							char *newPassword = strtok(NULL, ";");
+							strcpy(username, newUsername);
+							strcpy(password, newPassword);
+							if (steqIdentified(tempId) && steqBy(tempBy)) { //command valid
+								printf("username: %s\npassword: %s\n", username, password);
+							} else {
+								printf("error\n");
+								break;
+							}
+							/*here goes how to create user. use variable char username[20]; char password[20];
+							*
+							*/
+							break;
 
-			case 2:;
-				char database[20];
-				char *newDatabase = strtok(NULL, "\0");
-				strcpy(database, newDatabase);
-				printf("CREATE DATABASE:\n");
-				printf("database: %s\n", database);
-				/*here goes how to create database. use variable char database[20]; to get the database's name
-				*
-				*/
-				break;
-				
-			case 3:;
-				char table[20];
-				char *newTable = strtok(NULL, " ");
-				char *columns = strtok(NULL, ";");
-				char *newColumns = strtok(columns+1, ")");
-				char *columnName[100];
-				char *columnType[100];
-				char *temp = strtok(newColumns, " ");
-				strcpy(table, newTable);
-				printf("CREATE TABLE");
-				printf(": %s\n", table);
-				int i=0;
-				do {
-					columnName[i] = temp;
-					columnType[i] = strtok(NULL, ", ");
-					temp = strtok(NULL, " ");
-					if (columnName[i]==NULL || columnType[i]==NULL) {
-						printf("error\n");
-						break;
-					}
-					i++;
-				} while(temp);
-				for (int j=0; j<i; j++) {
-					printf("kolom: %s\ntipe: %s\n\n", columnName[j], columnType[j]);
-				}
-				/*here goes how to create table. var: char table[20]; char *columnName[100]; char *columnType[100];
-				*
-				*/
-				break;
+						case 2:;
+							char database[20];
+							char *newDatabase = strtok(NULL, "\0");
+							strcpy(database, newDatabase);
+							printf("CREATE DATABASE:\n");
+							printf("database: %s\n", database);
+							/*here goes how to create database. use variable char database[20]; to get the database's name
+							*
+							*/
+							break;
+							
+						case 3:;
+							char table[20];
+							char *newTable = strtok(NULL, " ");
+							char *columns = strtok(NULL, ";");
+							char *newColumns = strtok(columns+1, ")");
+							char *columnName[100];
+							char *columnType[100];
+							char *temp = strtok(newColumns, " ");
+							strcpy(table, newTable);
+							printf("CREATE TABLE");
+							printf(": %s\n", table);
+							int i=0;
+							do {
+								columnName[i] = temp;
+								columnType[i] = strtok(NULL, ", ");
+								temp = strtok(NULL, " ");
+								if (columnName[i]==NULL || columnType[i]==NULL) {
+									printf("error\n");
+									break;
+								}
+								i++;
+							} while(temp);
+							for (int j=0; j<i; j++) {
+								printf("kolom: %s\ntipe: %s\n\n", columnName[j], columnType[j]);
+							}
+							/*here goes how to create table. var: char table[20]; char *columnName[100]; char *columnType[100];
+							*
+							*/
+							break;
 
-			default:
-				printf("CREATING error\n");
+						default:
+							printf("CREATING error\n");
             }
         } else if (isInsert(command)) { //insert values
 			char *into = strtok(NULL, " ");
