@@ -37,7 +37,6 @@
 
 int client_socket;
 bool keep_connected;
-bool is_root;
 bool is_db_connected;
 char connected_db[50];
 
@@ -47,21 +46,28 @@ typedef struct sockaddr SA;
 /* Basic connection */
 int connect_to_server(int);
 void check(int , char* );
-void handle_connection(int, const char*, const char* );
+void handle_connection(char*, char* );
 
 /* Handler function */
 void connect_db_handler();
 void select_handler();
 
 /* Helper function */
+bool authenticate(char* user, char* password);
 void send_to_server(const void*, int);
 void read_from_server(void*, int, int);
 bool contains(const char* , const char* );
 void split_string(char[][100], char*, const char* );
 
-
 int main(int argc, char const *argv[]) {
   const int ROOT_ID = 0;
+  const int USERNAME = 2;
+  const int PASSWORD = 4;
+
+  bool is_root;
+  char username[50];
+  char password[50];
+
   is_root = getuid() == ROOT_ID;
 
   if (!is_root && argc != 5) {
@@ -69,17 +75,16 @@ int main(int argc, char const *argv[]) {
     return 0;
   }
 
+  // TODO: logic untuk input stdin
+  // Kalo mau masukin file gimana ???
+
   client_socket = connect_to_server(SERVER_PORT); 
 
-  // Do whatever
-  if (is_root) {
-    handle_connection(client_socket, "root", NULL);
-  } else {
-    const int USERNAME = 2;
-    const int PASSWORD = 4;
+  strcpy(username, is_root ? "root" : argv[USERNAME]);
+  strcpy(password, is_root ? "" : argv[PASSWORD]);
 
-    handle_connection(client_socket, argv[USERNAME], argv[PASSWORD]);
-  }
+  // Do whatever
+  handle_connection(username, password);
 
   close(client_socket);
   return 0;
@@ -118,36 +123,21 @@ void check(int result, char* error_message) {
   exit(EXIT_FAILURE);
 }
 
-void handle_connection(int client_socket, const char* user, const char* password) {
-  send_to_server(&is_root, BOOLEAN);
-
-  /* Authentication for user */
-  if (!is_root) {
-    // Bukan root -> harus diautentikasi
-    send_to_server(user, STRING);
-    send_to_server(password, STRING);
-
-    bool is_authenticated = false;
-    read_from_server(&is_authenticated, sizeof(is_authenticated), BOOLEAN);
-
-    if (!is_authenticated) {
-      printf("Incorrect username or password!\n");
-      keep_connected = false;
-    }
-  }
-  
-  strcpy(connected_db, "");
-  
-  is_db_connected = false;
-  keep_connected = true;
-
+void handle_connection(char* user, char* password) {
   char request[256];
   char message[50];
   int response;
 
+  /* Authentication for user */
+  keep_connected = authenticate(user, password);
+  is_db_connected = false;
+  strcpy(connected_db, "");
+
+  if (!keep_connected) printf("Invalid username or password!\n");
+
   while (keep_connected) {
     is_db_connected 
-      ? printf("%s=%s -> ", connected_db, user)
+      ? printf("%s : %s -> ", user, connected_db)
       : printf("%s -> ", user);
     
     scanf("%[^\n]%*c", request);
@@ -238,6 +228,22 @@ int translate_request(const char* request) {
 
 
 /* Helper function */
+bool authenticate(char* user, char* password) {
+  bool is_root = strcmp(user, "root") == 0;
+
+  send_to_server(&is_root, BOOLEAN);
+
+  if (is_root) return true;
+
+  send_to_server(user, STRING);
+  send_to_server(password, STRING);
+
+  bool is_authenticated = false;
+  read_from_server(&is_authenticated, sizeof(is_authenticated), BOOLEAN);
+
+  return is_authenticated;
+}
+
 void send_to_server(const void* data, int mode) {
   int length = 0;
 
