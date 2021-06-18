@@ -1334,17 +1334,20 @@ void to_lower (char *str) {
   return;
 }
 
-void reliability_handler (char path_to_reli[]) {
-  DIR *d;
+void reliability_handler (char path_to_reli[], char request_db[]) {
+  DIR *db_dir;
   struct dirent *dir;
-  d = opendir(".");
-  if (d)
-  {
-      while ((dir = readdir(d)) != NULL)
-      {
-          printf("%s\n", dir->d_name);
+  char path_to_db[100];
+  sprintf(path_to_db, "./databases/%s", request_db);
+  db_dir = opendir(path_to_db);
+  if (db_dir) {
+      while ((dir = readdir(db_dir)) != NULL) {
+        // printf("%s\n", dir->d_name);
+        char path_to_table[100];
+        sprintf(path_to_table, "%s/%s", path_to_db, dir->d_name);
+        reliability_table_handler(path_to_reli, path_to_table, dir->d_name);
       }
-      closedir(d);
+      closedir(db_dir);
   }
 }
 
