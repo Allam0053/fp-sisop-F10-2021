@@ -175,6 +175,7 @@ void handle_connection(int client_socket) {
   
   /* Kalau bukan root & gagal login -> keep_handling = false */
   while (keep_handling) {
+    printf("active db: %s\n", active_db);
     printf("Waiting for request...\n");
     read_from_client(request, sizeof(request), STRING);
     printf("Recieved request: %s\n", request);
@@ -289,27 +290,24 @@ void create_user_handler(char* request) {
 }
 
 void connect_db_handler(char* request) {
-  char request_copy[256];
-  char request_word[2][100];
-  char success_message[50];
-  char record[256];
-  char error_message[50] = "invalid connect to database syntax";
+  char request_token[2][100];
+  char db_request[50];
 
-  strcpy(request_copy, request);
-  to_lower(request_copy);
-  split_string(request_word, request_copy, " ;");
+  to_lower(request);
+  split_string(request_token, request, " ;");
+  strcpy(db_request, request_token[1]);
   
   int response = CONNECT_DB;
   send_to_client(&response, INTEGER);
   
-  bool has_access = is_user_has_db_access(request_word[1]);
+  bool has_access = is_user_has_db_access(db_request);
   int status = has_access ? ACCEPTED : REJECTED;
 
   send_to_client(&status, INTEGER);
 
   if (!has_access) return;
 
-  strcpy(active_db, request_word[1]);
+  strcpy(active_db, request_token[1]);
   send_to_client(active_db, STRING);
 }
 
@@ -365,38 +363,40 @@ void grant_permission_handler(char* request) {
   send_to_client(message, STRING);
 }
 
-// TODO: update di users.csv
 void create_db_handler(char* request) {
-  char request_copy[256];
-  char splitted[3][100];
-  char success_message[50];
-  char error_message[50] = "invalid create database syntax";
-  
   int response = CREATE_DB;
+
+  FILE* users_table;
+  char request_token[3][100];
+  char message[50];
+  char new_db_path[100];
+  char new_user_db_access[100];
+  
   send_to_client(&response, INTEGER);
 
-  strcpy(request_copy, request);
-  to_lower(request_copy);
-  split_string(splitted, request_copy, " ;");
+  to_lower(request);
+  split_string(request_token, request, " ;");
 
   /* Error tests */
-  if (strcmp(splitted[0], "create") != 0) {
-    send_to_client(error_message, STRING);
-    return;
-  }
-
-  if (strcmp(splitted[1], "database") != 0) {
-    send_to_client(error_message, STRING);
+  if (strcmp(request_token[0], "create") != 0 || strcmp(request_token[1], "database") != 0) {
+    strcpy(message, "Invalid create database syntax");
+    send_to_client(message, STRING);
     return;
   }
   
   // create db
-  char db_name[100];
-  sprintf(db_name, "%s%s", "./database/databases/", splitted[2]);
-  mkdir(db_name, 0777);
+  sprintf(new_db_path, "%s%s", "./database/databases/", request_token[2]);
+  mkdir(new_db_path, 0777);
 
-  sprintf(success_message, "Success create db '%s'", splitted[2]);
-  send_to_client(success_message, STRING);
+  // Give this new db access to that user
+  users_table = fopen("./database/databases/db_user/users.csv", "a");
+  sprintf(new_user_db_access, "%s,%s,%s\n", active_user, active_password, request_token[2]);
+  fputs(new_user_db_access, users_table);
+  fclose(users_table);
+
+  // Send message
+  sprintf(message, "Success create db '%s'", request_token[2]);
+  send_to_client(message, STRING);
 }
 
 // TODO: kalo active_db null -> cegah
@@ -1074,6 +1074,7 @@ bool authenticate_user() {
 }
 
 bool is_user_has_db_access(const char* db_name) {
+  bool has_accress = false;
   char record[256];
   
   FILE* users_table = fopen("./database/databases/db_user/users.csv", "r");
@@ -1090,13 +1091,13 @@ bool is_user_has_db_access(const char* db_name) {
       strcmp(record_column[0], active_user) == 0 
       && strcmp(record_column[2], db_name) == 0 
     ) {
-      fclose(users_table);
-      return true;
+      has_accress = true;
+      break;
     }
   }
 
   fclose(users_table);
-  return false;
+  return has_accress;
 }
 
 void send_to_client(const void* data, int mode) {
