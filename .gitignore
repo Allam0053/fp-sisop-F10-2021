@@ -98,6 +98,8 @@ $RECYCLE.BIN/
 
 # End of https://www.toptal.com/developers/gitignore/api/linux,windows,macos,visualstudiocode,git
 
+running.log
+logic.c
 *test*
 client/o/
 database/o/
