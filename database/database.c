@@ -890,21 +890,17 @@ void select_handler(char* request) {
   int where_column = -1;
   while (strcmp(splitted[++i], "from") != 0); 
   
-  printf("test-case-2\n");
   char path[256];
   sprintf(path, "./database/databases/%s/%s.csv", active_db, splitted[i + 1]);
-  printf("path: %s\n", path);
-  printf("test-case-3\n");
 
   FILE* table_read = fopen(path, "r");
   int indexes[50];
   char columns[256];
-  char record_column[10][100];
-  fgets(columns, 256, table_read); printf("next-to-cspn\n");
-  columns[strcspn(columns, "\n")] = 0; printf("after-to-cspn\n");
+  char record_column[50][100];
+  fgets(columns, 256, table_read);
+  columns[strcspn(columns, "\n")] = 0;
   int total_columns = split_string(record_column, columns, ",");
   int it3 = 0;
-  printf("test-case-4\n");
 
   /* ambil index kolom yang dibutuhkan, disimpan di int indexes[50] */
   if (strcmp(splitted[1], "*") == 0) {
@@ -912,7 +908,7 @@ void select_handler(char* request) {
       indexes[it3++] = it2;
     }
   } else {
-    for (int it1 = 1; it1 < i; it1--) {
+    for (int it1 = 1; it1 < i; it1++) {
       for (int it2 = 0; it2 < total_columns; it2++) {
         if (strcmp(splitted[it1], record_column[it2]) == 0) {
           indexes[it3++] = it2;
@@ -920,8 +916,8 @@ void select_handler(char* request) {
       }
     }
   }
-  printf("test-case-5\n");
 
+  /*
   where_t condition;
   condition.on = false;
   if (strcmp(splitted[i + 3], "where") == 0) {
@@ -935,7 +931,7 @@ void select_handler(char* request) {
       }
     }
   }
-  
+  */
   
   //send nama kolom
   bool keep_writing = false; //status to for client to keep read from server
@@ -944,18 +940,23 @@ void select_handler(char* request) {
     keep_writing = fgets(columns, 256, table_read);
 
     char data_to_send[500];
+    char cpy_columns[500];
     char splitted_column[50][100];
     char selected[50][100];
     
-    columns[strcspn(columns, "\n")] = 0; 
+    columns[strcspn(columns, "\n")] = 0;
+    strcpy(cpy_columns, columns);
     int total_columns = split_string(splitted_column, columns, ",");
     
     send_to_client(&keep_writing, BOOLEAN);
     if (!keep_writing) break;
 
-    /* ambil yang diminta, taruh di char selected[50][100]*/
+    // if (condition.on && send_column != 0) {
+    //   handle_select_where(condition, );
+    // }
+    /* ambil yang diminta, taruh di char selected[50][100]
     if (condition.on || send_column != 0) {
-      if (strcmp(splitted_column[condition.table_column_index], condition.value)) { //if value match
+      if (strcmp(splitted_column[condition.table_column_index], condition.value) == 0) { //if value match
         for (int it1 = 0; it1 < it3; it1++) {
           strcpy(selected[it1], splitted_column[indexes[it1]]);
           printf("test-case-100\n");
@@ -966,20 +967,22 @@ void select_handler(char* request) {
 
         send_to_client(columns, STRING); //send value
       }
-    } else {
-      for (int it1 = 0; it1 < it3; it1++) {
-        strcpy(selected[it1], splitted_column[indexes[it1]]);
-        printf("test-case-6.2\n");
-      }
-      printf("test-case-6\n");
-      send_to_client(columns, STRING); //send value
-      printf("test-case-12\n");
+    } else {*/
+    for (int it1 = 0; it1 < it3; it1++) {
+      strcpy(selected[it1], splitted_column[indexes[it1]]);
     }
+    join_string(data_to_send, selected, "\t|\t");
+    send_to_client(data_to_send, STRING); //send value
+    // }
     
     send_column++;
   } while (keep_writing);
   printf("test-case-7\n");
   return;
+}
+
+void handle_select_where() {
+
 }
 
 /* Helper functions */
