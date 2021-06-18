@@ -78,7 +78,6 @@ void drop_column_handler(char* );
 void insert_handler(char* );
 void update_handler(char* );
 void delete_handler(char* );
-
 void select_handler(char* );
 
 /* Helper functions */
@@ -747,11 +746,15 @@ void update_handler(char* request) {
   int response = UPDATE;
   send_to_client(&response, INTEGER);
 
-  if (strcmp(splitted[0], "update") != 0) {
+  // In case SQL syntax error
+  if (strcmp(splitted[0], "update") != 0 || strcmp(splitted[2], "set") != 0) {
     send_to_client(error_message, STRING);
     return;
   }
-  if (strcmp(splitted[2], "set") != 0) {
+
+  // In case user has not been connected to a database
+  if (strcmp(active_db, "") == 0) {
+    strcpy(error_message, "Connect to a database first!");
     send_to_client(error_message, STRING);
     return;
   }
@@ -769,14 +772,27 @@ void update_handler(char* request) {
   FILE* table_read = fopen(path, "r");
   FILE* table_write = fopen(new_path, "w");
 
+  // In case table does not exist
+  if (access(path, F_OK) != 0) {
+    strcpy(error_message, "Table does not exist!");
+    send_to_client(error_message, STRING);
+
+    return;
+  }
+
+  // In case Field does not exist
   fgets(columns, 256, table_read);
+
   if (!strstr(columns, splitted[3])) {
+    strcpy(error_message, "Field does not exist!");
     send_to_client(error_message, STRING);
     return;
   }
+
   fputs(columns, table_write);
   strcpy(copy_columns, columns);
   split_string(splitted_columns, copy_columns, ", \n");
+  
   int i = 0;
   while (strcmp(splitted_columns[i++], splitted[3]) != 0);
   i--;
@@ -1319,7 +1335,17 @@ void to_lower (char *str) {
 }
 
 void reliability_handler (char path_to_reli[]) {
-  
+  DIR *d;
+  struct dirent *dir;
+  d = opendir(".");
+  if (d)
+  {
+      while ((dir = readdir(d)) != NULL)
+      {
+          printf("%s\n", dir->d_name);
+      }
+      closedir(d);
+  }
 }
 
 void reliability_table_handler (char path_to_reli[], char path_to_table[], char table_name[]) {
