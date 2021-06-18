@@ -12,6 +12,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
+#include <time.h>
 
 #define SERVER_PORT 8080
 #define BACKLOG 7
@@ -20,6 +21,7 @@
 #define INTEGER 2
 #define STRING 3
 
+#define RESPONSE_ERR -2
 #define REJECTED -1
 #define FINISHED 0
 #define ACCEPTED 1
@@ -89,19 +91,36 @@ void reliability_table_handler(char*, char* );
 void remove_user_db_access(char* );
 void get_user_password(char*, const char* );
 bool authenticate_user();
-bool is_user_has_db_access(const char* );
+bool is_current_user_has_db_access(const char* );
 void send_to_client(const void*, int);
 void read_from_client(void*, int, int);
-void record_log(int, const char* );
+void record_log(const char[]);
 int split_string(char [][100], char [], const char []);
 int join_string (char[], char[][100], const char[]);
-int parse_to_client (char dest[], char splitted[][100]);
+int parse_to_client (char dest[], char splitted[][100], int lim);
 char* subset (char subbuff[], char buff[], int len);
 void to_lower (char *str);
+long get_timestamp(char []);
 int where_handler(where_t* condition, char column[], char value[], char record_column[][100], int total_column);
 bool select_column_handler (where_t* condition, char selected[][100], char splitted[][100], int indexes[], int len);
 
 int main(int argc, char const *argv[]) {
+  // pid_t pid = fork();
+
+  // if (pid < 0) exit(EXIT_FAILURE);
+  // if (pid > 0) exit(EXIT_SUCCESS);
+
+  // /* Below here is child (daemon) process */
+
+  // umask(0);
+  // pid_t sid = setsid();
+
+  // if (sid < 0) exit(EXIT_FAILURE);
+
+  // close(STDIN_FILENO);
+  // close(STDOUT_FILENO);
+  // close(STDERR_FILENO);
+
   int server_socket = setup_server(SERVER_PORT, BACKLOG);
 
   while (true) {
@@ -184,13 +203,17 @@ void handle_connection(int client_socket) {
   
   /* Kalau bukan root & gagal login -> keep_handling = false */
   while (keep_handling) {
+    int response_code = RESPONSE_ERR;
+    int finished_code = FINISHED;
+    char message[50] = "Invalid request!";
+
     printf("active db: %s\n", active_db);
     printf("Waiting for request...\n");
     read_from_client(request, sizeof(request), STRING);
     printf("Recieved request: %s\n", request);
 
     int t = translate_request(request);
-    printf("req code = %d\n", t);
+    printf("request code = %d\n", t);
     switch (t) {
       case CREATE_USER:
         create_user_handler(request);
@@ -232,11 +255,26 @@ void handle_connection(int client_socket) {
         select_handler(request);
         break;
 
+      case UPDATE:
+        update_handler(request);
+        break;
+
+      case DELETE:
+        delete_handler(request);
+        break;
+
       case RELIABILITY:
         reliability_handler(request);
         break;
 
+      case FINISHED:
+        send_to_client(&finished_code, INTEGER);
+        keep_handling = false;
+        break;
+
       default: 
+        send_to_client(&response_code, INTEGER);
+        send_to_client(message, STRING);
         printf("Invalid request!\n"); 
         break;
     }
@@ -272,28 +310,52 @@ int translate_request(const char* request) {
   if (strcmp(token1, "update") == 0) return UPDATE;
   if (strcmp(token1, "delete") == 0) return DELETE;
   if (strcmp(token1, "select") == 0) return SELECT;
+  if (strcmp(token1, "exit") == 0) return FINISHED;
 
   return -1;
 }
 
 // DDL
 void create_user_handler(char* request) {
-  char request_copy[256];
+  /* standard deklarasi */
+  /* CREATE USER jack IDENTIFIED BY jack123;
+  1. syntax ada "create user * identified by *"
+  2. harus root
+  */
+  record_log(request);
   char new_user[256];
   char splitted_request[6][100];
+  char error_message[50];
 
   int response_code = CREATE_USER;
   send_to_client(&response_code, INTEGER);
 
+  int total_token = split_string(splitted_request, request, " ;");
+
   if (!is_root) {
-    char denied_message[50] = "Login as root to create user!";
-    send_to_client(denied_message, STRING);
+    strcpy(error_message, "Login as root to create user!");
+    send_to_client(error_message, STRING);
     return;
   }
 
-  strcpy(request_copy, request);
-  split_string(splitted_request, request_copy, " ");
+  if (total_token != 6 || 
+    strcmp(splitted_request[0], "create") != 0 || 
+    strcmp(splitted_request[1], "user") != 0 || 
+    strcmp(splitted_request[3], "identified") != 0 || 
+    strcmp(splitted_request[4], "by") != 0) 
+  {
+    strcpy(error_message, "invalid create syntax");
+    send_to_client(error_message, STRING);
+    return;
+  }
+
   sprintf(new_user, "%s,%s,\n", splitted_request[2], splitted_request[5]);
+
+  mkdir("./database/databases/db_user", 0777);
+  if (access("./database/databases/db_user/users.csv", F_OK) != 0) {
+    FILE* creating_users_table = fopen("./database/databases/db_user/users.csv", "w");
+    fclose(creating_users_table);
+  }
   
   FILE* users_table = fopen("./database/databases/db_user/users.csv", "a");
   char message[50] = "User created!";
@@ -304,29 +366,51 @@ void create_user_handler(char* request) {
 }
 
 void connect_db_handler(char* request) {
+  /*
+  1. syntax harus "USE *"
+  2. DB harus ada
+  3. user harus punya akses. terdaftar di db_user. untuk root bebas
+  */
+  record_log(request);
   char request_token[2][100];
   char db_request[50];
+  char db_path[PATH_MAX];
 
   to_lower(request);
   split_string(request_token, request, " ;");
   strcpy(db_request, request_token[1]);
+  sprintf(db_path, "./database/databases/%s", db_request);
   
   int response = CONNECT_DB;
   send_to_client(&response, INTEGER);
   
-  bool has_access = is_user_has_db_access(db_request);
+  bool has_access = is_current_user_has_db_access(db_request);
   int status = has_access ? ACCEPTED : REJECTED;
 
+  DIR* dir = opendir(db_path);
+
+  /* Directory does not exist. */
+  if (ENOENT == errno) status = REJECTED;
+  
   send_to_client(&status, INTEGER);
 
-  if (!has_access) return;
+  if (status == REJECTED) return;
 
   strcpy(active_db, request_token[1]);
   send_to_client(active_db, STRING);
+  closedir(dir);
 }
 
 void grant_permission_handler(char* request) {
+  // Syarat:
+  // 0. syntax bener
+  // 1. harus root
+  // 2. db harus sudah ada
+  // 3. user harus sudah ada
+  
   // GRANT PERMISSION database1 INTO user1;
+  
+  record_log(request);
   char request_copy[256];
   char splitted[5][100];
   char success_message[50];
@@ -339,30 +423,42 @@ void grant_permission_handler(char* request) {
   to_lower(request_copy);
   split_string(splitted, request_copy, " ;");
 
+  // 0. syntax bener
+  if (strcmp(splitted[0], "grant") != 0 || strcmp(splitted[1], "permission") != 0 || strcmp(splitted[3], "into") != 0) {
+    send_to_client(error_message, STRING);
+    return;
+  }
+
+  // 1. harus root
   if (!is_root) {
     char denied_message[50] = "Only root can grant permission!";
     send_to_client(denied_message, STRING);
     return;
   }
+
+  DIR* db_dir;
+  char path_to_db[100];
+  sprintf(path_to_db, "./database/databases/%s", splitted[2]);
+  db_dir = opendir(path_to_db);
   
-  if (strcmp(splitted[0], "grant") != 0) {
+  // 2. db harus sudah ada
+  if (ENOENT == errno) {
+    strcpy(error_message, "DB does not exits!");
     send_to_client(error_message, STRING);
     return;
   }
+  
+  closedir(db_dir);
 
-  if (strcmp(splitted[1], "permission") != 0){
-    send_to_client(error_message, STRING);
-    return;
-  }
-
-  if (strcmp(splitted[3], "into") != 0){
-    send_to_client(error_message, STRING);
-    return;
-  }
-
-  /* Get password */
   char password[50];
   get_user_password(password, splitted[4]);
+
+  // 3. user harus sudah ada
+  if (strcmp(password, "\0") == 0) {
+    strcpy(error_message, "User does not exist!");
+    send_to_client(error_message, STRING);
+    return;
+  }
 
   /* Add to users db */
   char message[50] = "user has access now";
@@ -378,6 +474,7 @@ void grant_permission_handler(char* request) {
 }
 
 void create_db_handler(char* request) {
+  record_log(request);
   int response = CREATE_DB;
 
   FILE* users_table;
@@ -400,7 +497,11 @@ void create_db_handler(char* request) {
   
   // create db
   sprintf(new_db_path, "%s%s", "./database/databases/", request_token[2]);
-  mkdir(new_db_path, 0777);
+  if (!mkdir(new_db_path, 0777)) {
+    strcpy(message, "DB already exist / create fail");
+    send_to_client(message, STRING);
+    return;
+  }
 
   // Give this new db access to that user
   users_table = fopen("./database/databases/db_user/users.csv", "a");
@@ -414,10 +515,18 @@ void create_db_handler(char* request) {
 }
 
 void create_table_handler(char* request) {
+  record_log(request);
+  /*
+  1. harus sudah ada terkoneksi ke suatu database
+  2. syntax harus ada CREATE TABLE
+  3. table harus belum ada di db tersebut atau currently active_db
+  4. type data harus salah satu dari string atau int
+  5. misal user create, nanti akan didaftarkan ke db_user untuk penambahan akses
+  */
   // CREATE TABLE mhs (nama string, umur int);
   // CREATE TABLE table1 (kolom1 string, kolom2 int, kolom3 string, kolom4 int);
   char success_message[50] = "Success create value";
-  char error_message[50] = "invalid create syntax";
+  char error_message[50] = "Invalid create syntax";
   char request_copy[256];
   char splitted[50][100];
   char path[256];
@@ -430,23 +539,22 @@ void create_table_handler(char* request) {
   int response = CREATE_TABLE;
   send_to_client(&response, INTEGER);
 
-
+  // 1. harus sudah ada terkoneksi ke suatu database
   if (strcmp(active_db, "") == 0) {
     strcpy(error_message, "Connect to a database first.");
     send_to_client(error_message, STRING);
     return;
   }
-  if (strcmp(splitted[0], "create") != 0) {
-    send_to_client(error_message, STRING);
-    return;
-  }
-  if (strcmp(splitted[1], "table") != 0) {
+
+  // 2. syntax harus ada CREATE TABLE
+  if (strcmp(splitted[0], "create") != 0 || strcmp(splitted[1], "table") != 0) {
     send_to_client(error_message, STRING);
     return;
   }
   
   sprintf(path, "./database/databases/%s/%s.csv", active_db, splitted[2]);
 
+  // 3. table harus belum ada di db tersebut atau currently active_db
   if (access(path, F_OK) == 0) {
     strcpy(error_message, "Table already exist!");
     send_to_client(error_message, STRING);
@@ -463,7 +571,10 @@ void create_table_handler(char* request) {
   bzero(columns, 256);
   bzero(type_data, 256);
 
+
+  /* misah column sama type data ke variable berbeda. sama formatting buat dimasukin ke file */
   for (int it = 3; it < len; it += 2) {
+    // 4. type data harus salah satu dari string atau int
     if (strcmp(splitted[it], "") == 0 && (strcmp(splitted[it+1], "int") != 0 || strcmp(splitted[it+1], "string") != 0)) {
       send_to_client(error_message, STRING);
       return;
@@ -479,15 +590,10 @@ void create_table_handler(char* request) {
   printf("columns: %s\n", columns);
   printf("type_data: %s\n", type_data);
 
+  /* ngeprint nama kolom sama type data ke table */
   fputs(columns, table_write);
   fputs(type_data, table_write);
-  /*
-  FILE* users_table_append = fopen("./database/databases/db_user/users.csv", "a");
-  char new_table[256];
-  sprintf(new_table, "%s,%s,%s\n", active_user, active_password, splitted[2]);
-  fputs(new_table, users_table_append);
-  fclose(users_table_append);
-  */
+  
   fclose(table_write);
 
   send_to_client(success_message, STRING);
@@ -495,6 +601,12 @@ void create_table_handler(char* request) {
 }
 
 void drop_db_handler(char* request) {
+  record_log(request);
+  /*
+  1. syntax harus ada DROP DATABASE
+  2. db harus ada
+  3. yg ngedrop harus punya akses ke db tsb
+  */
   int response_code = DROP_DB;
 
   DIR* dir;
@@ -509,12 +621,19 @@ void drop_db_handler(char* request) {
 
   split_string(request_token, request, " ;");
 
+  // 1. syntax harus ada DROP DATABASE
+  if (strcmp(request_token[0], "drop") != 0 || strcmp(request_token[1], "database") != 0) {
+    strcpy(message, "Invalid syntax error");
+    send_to_client(message, STRING);
+    return;
+  }
+
   strcpy(db_name, request_token[2]);
   sprintf(db_path, "./database/databases/%s", db_name);
 
   dir = opendir(db_path);
 
-  // Directoryy / database doesn't exist
+  // 2. db harus ada
   if (ENOENT == errno) {
     sprintf(message, "Database`%s` does not exist!", db_name);
     send_to_client(message, STRING);
@@ -524,8 +643,9 @@ void drop_db_handler(char* request) {
   }
 
   // Check user access to db
-  has_access = is_user_has_db_access(db_name);
+  has_access = is_current_user_has_db_access(db_name);
   
+  // 3. yg ngedrop harus punya akses ke db tsb
   if (!has_access) {
     sprintf(message, "You don't have permission to `%s` database!", db_name);
     send_to_client(message, STRING);
@@ -553,8 +673,12 @@ void drop_db_handler(char* request) {
 }
 
 void drop_table_handler(char* request) {
-  // 1. cek koneksi apakah null atau tidak
-  // 2. lakukan delete file
+  record_log(request);
+  // 0. syntax harus bener
+  // 1. harus sudah terkoneksi ke database
+  // 2. table harus sudah ada
+
+  // lakukan delete file
 
   int response_code = DROP_TABLE;
 
@@ -565,7 +689,18 @@ void drop_table_handler(char* request) {
 
   send_to_client(&response_code, INTEGER);
 
-  // In case user has not been connected to a database
+  split_string(request_token, request, " ;");
+  strcpy(table_name, request_token[2]);
+
+  // 0. syntax harus bener
+  if (strcmp(request_token[0], "drop") != 0 || strcmp(request_token[0], "table") != 0) {
+    strcpy(message, "Connect to a database first");
+    send_to_client(message, STRING);
+
+    return;
+  }
+
+  // 1. harus sudah terkoneksi ke database
   if (strcmp(active_db, "") == 0) {
     strcpy(message, "Connect to a database first");
     send_to_client(message, STRING);
@@ -573,11 +708,9 @@ void drop_table_handler(char* request) {
     return;
   }
 
-  split_string(request_token, request, " ;");
-  strcpy(table_name, request_token[2]);
   sprintf(table_path, "./database/databases/%s/%s.csv", active_db, table_name);
 
-  // In case table does not exist
+  // 2. table harus sudah ada
   if (access(table_path, F_OK) != 0) {
     sprintf(message, "Table `%s` does not exist.", table_name);
     send_to_client(message, STRING);
@@ -591,6 +724,13 @@ void drop_table_handler(char* request) {
 }
 
 void drop_column_handler(char* request) {
+  record_log(request);
+  // Syarat:
+  // 0. syntax harus bener.
+  // 1. udah terkonek ke suatu db
+  // 2. apakah table ada?
+  // 3. apakah kolom ada?
+
   int response_code = DROP_COLUMN;
   bool column_not_exist = true;
   
@@ -615,18 +755,30 @@ void drop_column_handler(char* request) {
   sprintf(table_path, "./database/databases/%s/%s.csv", active_db, table_name);
   sprintf(new_table_path, "./database/databases/%s/new-%s.csv", active_db, table_name);
 
-  // 1. apakah table ada?
-  // 2. apakah kolom ada?
-  // 3. lakukan copy file tanpa kolom lalu hapus
+  // lakukan copy file tanpa kolom lalu hapus
+  // DROP COLUMN <nama column> FROM <nama tabel>;
 
-  // 1. apakah table ada?
+  // 0. syntax harus bener.
+  if (strcmp(req_token[0], "drop") != 0 || strcmp(req_token[1], "column") != 0 || strcmp(req_token[3], "from") != 0) {
+    strcpy(message, "Invalid drop syntax\n");
+    send_to_client(message, STRING);
+    return;
+  }
+
+  // 1. udah terkonek ke suatu db
+  if (strcmp(active_db, "") == 0) {
+    strcpy(message, "Connect to a database first!\n");
+    send_to_client(message, STRING);
+    return;
+  }
+
+  // 2. apakah table ada?
   if (access(table_path, F_OK) != 0) {
     strcpy(message, "Table does not exits!");
     send_to_client(message, STRING);
     return;
   }
-
-  // 2. apakah kolom ada?
+  
   table = fopen(table_path, "r");
   fgets(table_columns, 256, table);
   fclose(table);
@@ -642,13 +794,14 @@ void drop_column_handler(char* request) {
     }
   }
 
+  // 3. apakah kolom ada?
   if (column_not_exist) {
     strcpy(message, "Column does not exist!");
     send_to_client(message, STRING);
     return;
   }
 
-  // 3. lakukan copy file tanpa kolom lalu hapus
+  // lakukan copy file tanpa kolom lalu hapus
   table = fopen(table_path, "r");
   new_table = fopen(new_table_path, "w");
 
@@ -677,7 +830,13 @@ void drop_column_handler(char* request) {
 
 // DML
 void insert_handler(char* request) {
-  // INSERT INTO table1 (‘value1’, 2, ‘value3’, 4);
+  record_log(request);
+  /*
+  1. syntax harus INSERT INTO
+  2. table harus ada di currently active_db
+  3. kolom harus sesuai
+  */
+  // INSERT INTO table1 ('value1', 2, 'value3', 4);
   char request_copy[256];
   char splitted[50][100];
   char success_message[50] = "Success insert value";
@@ -689,6 +848,12 @@ void insert_handler(char* request) {
 
   int response = INSERT;
   send_to_client(&response, INTEGER);
+
+  if (strcmp(active_db, "") == 0) {
+    strcpy(error_message, "You are not connected to a DB\n");
+    send_to_client(error_message, STRING);
+    return;
+  }
 
   if (strcmp(splitted[0], "insert") != 0) {
     send_to_client(error_message, STRING);
@@ -743,9 +908,15 @@ void insert_handler(char* request) {
 }
 
 void update_handler(char* request) {
+  record_log(request);
   // UPDATE table1 SET kolom1='new_value1';
   // UPDATE table1 SET kolom1='new_value1' WHERE kolomx = 'certain_value';
-  
+  /*
+  1. syntax harus ada UPDATE SET;
+  2. harus connect db
+  3. table harus ada
+  4. kolom value harus sesuai
+  */
   char request_copy[256];
   char splitted[50][100];
   char success_message[] = "Success update value";
@@ -753,7 +924,7 @@ void update_handler(char* request) {
 
   strcpy(request_copy, request);
   to_lower(request_copy);
-  split_string(splitted, request_copy, " ,=();");
+  split_string(splitted, request_copy, " ,=();\n");
 
   int response = UPDATE;
   send_to_client(&response, INTEGER);
@@ -824,30 +995,41 @@ void update_handler(char* request) {
       columns[strcspn(columns, "\n")] = 0;  
       int total_columns = split_string(record_column, columns, ",");
 
-      if (strcmp(record_column[index_where], splitted[7])) {
+      if (strcmp(record_column[index_where], splitted[7]) == 0) {
         strcpy(record_column[i], splitted[4]);
       }
       int j = 0;
       while (j < total_columns) {
         fputs(record_column[j++], table_write);
-        j < total_columns - 1 ? fputs(",", table_write) : fputs("\n", table_write);
+        j < total_columns ? fputs(",", table_write) : fputs("\n", table_write);
       }
     }
   } else {
+    printf("Masuk else\n");
     while(fgets(columns, 256, table_read)) {
       char record_column[20][100];
       
+      char output[200];
+      bzero(output, 200);
+      
       columns[strcspn(columns, "\n")] = 0;  
-      int total_columns = split_string(record_column, columns, ",");
+      int total_columns = split_string(record_column, columns, ",\n");
 
       strcpy(record_column[i], splitted[4]);
       int j = 0;
+      // update phone set age = 19;
       while (j < total_columns) {
-        fputs(record_column[j++], table_write);
-        j < total_columns - 1 ? fputs(",", table_write) : fputs("\n", table_write);
+        record_column[j][strcspn(record_column[j], "\n")] = 0;
+        printf("record_column[%d]: %s\n", j, record_column[j]);
+        strcat(output, record_column[j++]);
+        if (j < total_columns) strcat(output, ",");
       }
+      strcat(output, "\n");
+      fputs(output, table_write);
     }
   }
+
+  send_to_client(success_message, STRING);
 
   fclose(table_read);
   fclose(table_write);
@@ -856,9 +1038,14 @@ void update_handler(char* request) {
 }
 
 void delete_handler(char* request) {
+  record_log(request);
   // DELETE FROM table1;
   // DELETE FROM table1 WHERE kolom1=’value1’;
-
+  /*
+  1. syntax harus delete from
+  2. harus connect db, otomatis harus punya akses dll.
+  3. table harus ada
+  */
   char request_copy[256];
   char splitted[50][100];
   char success_message[] = "Success delete value";
@@ -875,7 +1062,7 @@ void delete_handler(char* request) {
     send_to_client(error_message, STRING);
     return;
   }
-  if (strcmp(splitted[2], "from") != 0) {
+  if (strcmp(splitted[1], "from") != 0) {
     send_to_client(error_message, STRING);
     return;
   }
@@ -883,7 +1070,7 @@ void delete_handler(char* request) {
   char path[256];
   char new_path[256];
   sprintf(path, "./database/databases/%s/%s.csv", active_db, splitted[2]);
-  sprintf(path, "./database/databases/%s/new-%s.csv", active_db, splitted[2]);
+  sprintf(new_path, "./database/databases/%s/new-%s.csv", active_db, splitted[2]);
 
   FILE* table_read = fopen(path, "r");
   FILE* table_write = fopen(new_path, "w");
@@ -893,6 +1080,11 @@ void delete_handler(char* request) {
   strcpy(cpy_column, columns);
   columns[strcspn(columns, "\n")] = 0;
   int total_columns = split_string(record_column, columns, ",");
+
+  fputs(cpy_column, table_write);
+
+  fgets(cpy_column, 256, table_read);
+  fputs(cpy_column, table_write);
 
   where_t condition;
   condition.on = false;
@@ -907,8 +1099,7 @@ void delete_handler(char* request) {
       }
     }
   }
-  
-  fputs(cpy_column, table_write);
+
   if (condition.on) {
     while (fgets(columns, 256, table_read)) {
       char splitted_column[50][100];
@@ -933,11 +1124,17 @@ void delete_handler(char* request) {
 }
 
 void select_handler(char* request) {
+  record_log(request);
   // SELECT * FROM table1;
   // SELECT kolom1, kolom2 FROM table1;
   // SELECT kolom1, kolom2 FROM table1 WHERE kolomx = 'certain_value';
   // USE mahasiswa
   // SELECT * FROM table1;
+  /*
+  1. syntax harus SELECT FROM
+  2. harus connect db
+  3. table harus ada
+  */
 
   char request_copy[256];
   char splitted[50][100];
@@ -980,6 +1177,7 @@ void select_handler(char* request) {
   FILE* table_read = fopen(path, "r");
 
   fgets(columns, 256, table_read);
+  rewind(table_read);
   columns[strcspn(columns, "\n")] = 0;
   int total_columns = split_string(record_column, columns, ",");
   int it3 = 0;
@@ -1003,8 +1201,9 @@ void select_handler(char* request) {
   
   where_t condition;
   condition.on = false;
-  if (strcmp(splitted[i + 3], "where") == 0) {
-    where_handler(&condition, splitted[i + 4], splitted[i + 5], record_column, total_columns);
+  if (strcmp(splitted[i + 2], "where") == 0) {
+    printf("where kedetect\n");
+    condition.table_column_index = where_handler(&condition, splitted[i + 3], splitted[i + 4], record_column, total_columns);
   }
   
   //send nama kolom
@@ -1018,7 +1217,9 @@ void select_handler(char* request) {
     char splitted_column[50][100];
     char selected[50][100];
     bool send_it;
+    char kosong[] = "";
     
+    bzero(data_to_send, 500);
     columns[strcspn(columns, "\n")] = 0;
     strcpy(cpy_columns, columns);
     int total_columns = split_string(splitted_column, columns, ",");
@@ -1027,7 +1228,7 @@ void select_handler(char* request) {
     if (!keep_writing) break;
 
     /* jika row pertama maka select nama kolom */
-    if (send_column == 0) {
+    if (send_column == 0 || send_column == 1) {
       bool temp = condition.on;
       condition.on = false;
       send_it = select_column_handler(&condition, selected, splitted_column, indexes, it3);
@@ -1036,25 +1237,21 @@ void select_handler(char* request) {
       send_it = select_column_handler(&condition, selected, splitted_column, indexes, it3);
     }
     
-    if (send_it) {
-      bzero(data_to_send, 0);
-      parse_to_client(data_to_send, selected);
+    if (send_it || send_column == 0 || send_column == 1) {
+      bzero(data_to_send, 500);
+      if (strcmp(selected[0], "") != 0) parse_to_client(data_to_send, selected, it3);
       printf("%s\n", data_to_send);
       send_to_client(data_to_send, STRING);
     } else {
       printf("a row skipped\n");
+      send_to_client(kosong, STRING);
     }
     
     send_column++;
   } while (keep_writing);
   
   fclose(table_read);
-  printf("end-of-function\n");
   return;
-}
-
-void handle_select_where() {
-
 }
 
 /* Helper functions */
@@ -1086,7 +1283,12 @@ void remove_user_db_access(char* db_name) {
   rename("./database/databases/db_user/new-users.csv", "./database/databases/db_user/users.csv");
 }
 
+/* user ga ada maka error */
 void get_user_password(char* password, const char* username) {
+  /*
+  1. db_user harus ada
+  2. username harus ada
+  */
   char record[256];
   FILE* users_table = fopen("./database/databases/db_user/users.csv", "r");
 
@@ -1109,12 +1311,18 @@ void get_user_password(char* password, const char* username) {
 }
 
 bool authenticate_user() {
+  /*
+  1. harus ada username & password
+  2. harus ada active_db yaitu db_user
+  3. record user harus ada di db_user
+  */
   bool user_auth = false;
   char user[50];
   char password[50];
   char record[256];
   
   bzero(active_user, 50);
+  bzero(active_password, 50);
   bzero(active_db, 50);
 
   read_from_client(&is_root, sizeof(is_root), BOOLEAN);
@@ -1157,9 +1365,11 @@ bool authenticate_user() {
   return user_auth;
 }
 
-bool is_user_has_db_access(const char* db_name) {
+bool is_current_user_has_db_access(const char* db_name) {
   bool has_accress = false;
   char record[256];
+
+  if (is_root) return true;
   
   FILE* users_table = fopen("./database/databases/db_user/users.csv", "r");
 
@@ -1230,27 +1440,19 @@ void read_from_client(void* data, int data_size, int mode) {
   }
 }
 
-void record_log(int mode, const char* filename) {
-  FILE* log = fopen("./running.log", "a");
+void record_log(const char command[]) {
+  char copy_command[256];
+  strcpy(copy_command, command);
+  FILE* log = fopen("./database/running.log", "a");
   char log_format[256];
+  char timestamp[256];
+  bzero(timestamp, 256);
   bzero(log_format, 256);
-  /* 
-  switch (mode) {
-    case ADD:
-      sprintf(log_format, "Tambah : %s (%s:%s)\n", filename, user_id, user_password);
-      break;
-
-    case DELETE:
-      sprintf(log_format, "Hapus : %s (%s:%s)\n", filename, user_id, user_password);
-      break;
-
-    default:
-      printf("Unknown log mode!\n");
-      break;
-  }
-  */
+  get_timestamp(timestamp);
+  sprintf(log_format, "(%s):%s:%s\n", timestamp, active_user, copy_command);
   fputs(log_format, log);
   fclose(log);
+  return;
 }
 
 // return size
@@ -1283,18 +1485,18 @@ int join_string (char dest[], char splitted[][100], const char delimiter[]) {
 *  if the data is too long, it'll be cut. 
 *  per column only 15 words or equal to 4 tabs
 */
-int parse_to_client (char dest[], char splitted[][100]) {
+int parse_to_client (char dest[], char splitted[][100], int lim) {
   int i = 0;
   // bzero(dest, 0);
   strcpy(dest, "|");
-  while (strcmp(splitted[i], "") != 0) {
+  while (strcmp(splitted[i], "") != 0 && i < lim) {
     // strcat(dest, delimiter);
     if (strlen(splitted[i]) > 11) {
       char subbuff[15];
       subset(subbuff, splitted[i], 13);
       strcat(dest, subbuff);
       strcat(dest, "\t");
-    } else if (strlen(splitted[i]) > 7) {
+    } else if (strlen(splitted[i]) > 6) {
       strcat(dest, splitted[i]);
       strcat(dest, "\t");
     } else if (strlen(splitted[i]) > 3) {
@@ -1331,6 +1533,42 @@ void to_lower (char *str) {
   return;
 }
 
+long get_timestamp(char time_stamp[]) {
+  time_t epochtime = time(NULL);
+  if (epochtime == -1) return -1;
+
+  struct tm* ptm = localtime(&epochtime);
+  if (!ptm) return -1;
+
+  char temp[5];
+
+  sprintf(temp, "%4d", 1900 + ptm->tm_year);
+  strcat(time_stamp, temp);
+  strcat(time_stamp, "-");
+
+
+  sprintf(temp, "%02d", 1 + ptm->tm_mon);
+  strcat(time_stamp, temp);
+  strcat(time_stamp, "-");
+
+  sprintf(temp, "%02d", ptm->tm_mday);
+  strcat(time_stamp, temp);
+  strcat(time_stamp, "_");
+
+
+  sprintf(temp, "%02d", ptm->tm_hour);
+  strcat(time_stamp, temp);
+  strcat(time_stamp, ":");
+
+  sprintf(temp, "%02d", ptm->tm_min);
+  strcat(time_stamp, temp);
+  strcat(time_stamp, ":");
+
+  sprintf(temp, "%02d", ptm->tm_sec);
+  strcat(time_stamp, temp);
+
+  return epochtime;
+}
 
 //test reliability
 void reliability_handler (char* request) {
@@ -1450,14 +1688,15 @@ int where_handler(where_t* condition, char column[], char value[], char record_c
 // select_column_handler(&condition, selected, splitted_column, indexes, it3);
 bool select_column_handler (where_t* condition, char selected[][100], char splitted[][100], int indexes[], int len) {
   if (condition->on){
+    printf("%s : %s\n", condition->value, splitted[condition->table_column_index]);
     if (strcmp(condition->value, splitted[condition->table_column_index]) == 0) {
       for (int it1 = 0; it1 < len; it1++) {
-        strcpy(selected[it1], splitted[ indexes[ it1 ] ]);
+        strcpy(selected[ it1], splitted[ indexes[ it1 ] ]);
       } return true;
     } else return false;
   } else {
     for (int it1 = 0; it1 < len; it1++) {
-      strcpy(selected[it1], splitted[ indexes[ it1 ]]);
+      strcpy(selected[ it1 ], splitted[ indexes[ it1 ]]);
     } 
     return true;
   }
