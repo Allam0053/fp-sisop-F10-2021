@@ -1026,7 +1026,7 @@ void get_user_password(char* password, const char* username) {
 }
 
 bool authenticate_user() {
-  bool user_auth = true;
+  bool user_auth = false;
   char user[50];
   char password[50];
   char record[256];
