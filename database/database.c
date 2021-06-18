@@ -893,10 +893,21 @@ void select_handler(char* request) {
   char path[256];
   sprintf(path, "./database/databases/%s/%s.csv", active_db, splitted[i + 1]);
 
-  FILE* table_read = fopen(path, "r");
   int indexes[50];
   char columns[256];
-  char record_column[50][100];
+  char record_column[20][100];
+
+  if (access(path, F_OK) != 0) {
+    int status = REJECTED;
+    send_to_client(&status, INTEGER);
+    return;
+  } else {
+    int status = ACCEPTED;
+    send_to_client(&status, INTEGER);
+  }
+
+  FILE* table_read = fopen(path, "r");
+
   fgets(columns, 256, table_read);
   columns[strcspn(columns, "\n")] = 0;
   int total_columns = split_string(record_column, columns, ",");
@@ -904,6 +915,7 @@ void select_handler(char* request) {
 
   /* ambil index kolom yang dibutuhkan, disimpan di int indexes[50] */
   if (strcmp(splitted[1], "*") == 0) {
+    printf("column: %s\n", splitted[1]);
     for (int it2 = 0; it2 < total_columns; it2++) {
       indexes[it3++] = it2;
     }
@@ -912,6 +924,7 @@ void select_handler(char* request) {
       for (int it2 = 0; it2 < total_columns; it2++) {
         if (strcmp(splitted[it1], record_column[it2]) == 0) {
           indexes[it3++] = it2;
+          printf("column: %s\n", splitted[it1]);
         }
       }
     }
@@ -971,13 +984,17 @@ void select_handler(char* request) {
     for (int it1 = 0; it1 < it3; it1++) {
       strcpy(selected[it1], splitted_column[indexes[it1]]);
     }
+    bzero(data_to_send, 0);
     join_string(data_to_send, selected, "\t|\t");
+    printf("%s\n", data_to_send);
     send_to_client(data_to_send, STRING); //send value
     // }
     
     send_column++;
   } while (keep_writing);
-  printf("test-case-7\n");
+  
+  fclose(table_read);
+  printf("end-of-function\n");
   return;
 }
 
@@ -1167,7 +1184,7 @@ int split_string(char splitted[][100], char origin[], const char delimiter[]) {
 // return size of splitted[][100].
 int join_string (char dest[], char splitted[][100], const char delimiter[]) {
   int i = 0;
-  
+  bzero(dest, 0);
   strcat(dest, splitted[i++]);
   while (strcmp(splitted[i], "") != 0) {
     strcat(dest, delimiter);
