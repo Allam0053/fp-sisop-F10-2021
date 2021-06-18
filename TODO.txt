@@ -1,11 +1,17 @@
+NEXT TODO:
+1. dump-client
+2. WHERE SQL
+3. input redirection
+4. error hanlding dibenerin
+
 1. compile:
-    /usr/bin/clang -g '/Users/riza/Documents/A-Kuliah/6-Sistem-Operasi/Praktikum/fp/database/database.c' -o '/Users/riza/Documents/A-Kuliah/6-Sistem-Operasi/Praktikum/fp/database/o/database'
-    
-    /usr/bin/clang -g '/Users/riza/Documents/A-Kuliah/6-Sistem-Operasi/Praktikum/fp/client/client.c' -o '/Users/riza/Documents/A-Kuliah/6-Sistem-Operasi/Praktikum/fp/client/o/client'
+  /usr/bin/clang -g '/Users/riza/Documents/A-Kuliah/6-Sistem-Operasi/Praktikum/fp/database/database.c' -o '/Users/riza/Documents/A-Kuliah/6-Sistem-Operasi/Praktikum/fp/database/o/database'
+  
+  /usr/bin/clang -g '/Users/riza/Documents/A-Kuliah/6-Sistem-Operasi/Praktikum/fp/client/client.c' -o '/Users/riza/Documents/A-Kuliah/6-Sistem-Operasi/Praktikum/fp/client/o/client'
     
 2. run:
-    client -> ./client/o/client
-    server -> ./database/o/database
+  client -> ./client/o/client
+  server -> ./database/o/database
 
 How application works:
 1. server berjalan di background (daemon)
