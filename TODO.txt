@@ -1,3 +1,12 @@
+1. compile:
+    /usr/bin/clang -g '/Users/riza/Documents/A-Kuliah/6-Sistem-Operasi/Praktikum/fp/database/database.c' -o '/Users/riza/Documents/A-Kuliah/6-Sistem-Operasi/Praktikum/fp/database/o/database'
+    
+    /usr/bin/clang -g '/Users/riza/Documents/A-Kuliah/6-Sistem-Operasi/Praktikum/fp/client/client.c' -o '/Users/riza/Documents/A-Kuliah/6-Sistem-Operasi/Praktikum/fp/client/o/client'
+    
+2. run:
+    client -> ./client/o/client
+    server -> ./database/o/database
+
 How application works:
 1. server berjalan di background (daemon)
 2. akses console database -> jalananin program client (mirip buka mysql/postgres di terminal).
