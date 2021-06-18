@@ -82,6 +82,7 @@ void delete_handler(char* );
 void select_handler(char* );
 
 /* Helper functions */
+void remove_user_db_access(char* );
 void get_user_password(char*, const char* );
 bool authenticate_user();
 bool is_user_has_db_access(const char* );
@@ -90,6 +91,8 @@ void read_from_client(void*, int, int);
 void record_log(int, const char* );
 int split_string(char [][100], char [], const char []);
 int join_string (char[], char[][100], const char[]);
+int parse_to_client (char dest[], char splitted[][100]);
+char* subset (char subbuff[], char buff[], int len);
 void to_lower (char *str);
 
 int main(int argc, char const *argv[]) {
@@ -208,7 +211,7 @@ void handle_connection(int client_socket) {
         break;
 
       case DROP_TABLE:
-        // drop_table_handler(request);
+        drop_table_handler(request);
         break;
 
       case DROP_COLUMN:
@@ -399,14 +402,15 @@ void create_db_handler(char* request) {
   send_to_client(message, STRING);
 }
 
-// TODO: kalo active_db null -> cegah
 void create_table_handler(char* request) {
   // CREATE TABLE mhs (nama string, umur int);
   // CREATE TABLE table1 (kolom1 string, kolom2 int, kolom3 string, kolom4 int);
-  char request_copy[256];
-  char splitted[50][100];
   char success_message[50] = "Success create value";
   char error_message[50] = "invalid create syntax";
+  char request_copy[256];
+  char splitted[50][100];
+  char path[256];
+  char new_path[256];
 
   strcpy(request_copy, request);
   to_lower(request_copy);
@@ -429,19 +433,18 @@ void create_table_handler(char* request) {
     send_to_client(error_message, STRING);
     return;
   }
-
-  char path[256];
-  char new_path[256];
+  
   sprintf(path, "./database/databases/%s/%s.csv", active_db, splitted[2]);
+
   if (access(path, F_OK) == 0) {
     strcpy(error_message, "Table already exist!");
     send_to_client(error_message, STRING);
     return;
   }
+
   sprintf(new_path, "./database/databases/%s/%s.csv", active_db, splitted[2]);
 
   FILE* table_write = fopen(new_path, "w");
-
 
   char columns[256];
   char type_data[256];
@@ -481,59 +484,99 @@ void create_table_handler(char* request) {
 }
 
 void drop_db_handler(char* request) {
-  char cpy_req[256];
-  char req_split[3][100];
+  int response_code = DROP_DB;
+
+  DIR* dir;
+  bool has_access;
+  char request_token[3][100];
+  char delete_folder_command[100];
+  char message[50];
   char db_path[PATH_MAX];
+  char db_name[50];
 
-  int res_code = DROP_DB;
-  send_to_client(&res_code, INTEGER);
+  send_to_client(&response_code, INTEGER);
 
-  strcpy(cpy_req, request);
-  split_string(req_split, cpy_req, " ");
+  split_string(request_token, request, " ;");
 
-  bool has_access = is_user_has_db_access(req_split[2]);
-  
-  if (!has_access) {
-    char denied_message[50] = "Database access denied!";
-    send_to_client(denied_message, STRING);
+  strcpy(db_name, request_token[2]);
+  sprintf(db_path, "./database/databases/%s", db_name);
+
+  dir = opendir(db_path);
+
+  // Directoryy / database doesn't exist
+  if (ENOENT == errno) {
+    sprintf(message, "Database`%s` does not exist!", db_name);
+    send_to_client(message, STRING);
+    closedir(dir);
+
     return;
   }
 
-  strcpy(db_path, "./database/databases/");
-  strcat(db_path, req_split[2]);
-
-  DIR* dir = opendir("mydir");
+  // Check user access to db
+  has_access = is_user_has_db_access(db_name);
   
-  if (dir) {
-    /* Directory exists. */
-    FILE* users_table_read = fopen("./database/databases/db_user/users.csv", "r");
-    FILE* users_table_write = fopen("./database/databases/db_user/new-users.csv", "w");
-
-    char record[256];
-    while (fgets(record, 256, users_table_read)) {
-      char column[5][100];
-      char copy_record[256];
-
-      strcpy(copy_record, record);
-      
-      record[strcspn(record, "\n")] = 0;
-
-      split_string(column, copy_record, ",");
-
-      if (strcmp(column[2], req_split[2]) == 0) continue;
-
-      // TODO: masih salah fputs
-      // fputs(column, users_table_write);
-    }
-    
-    rmdir(db_path);
-    
+  if (!has_access) {
+    sprintf(message, "You don't have permission to `%s` database!", db_name);
+    send_to_client(message, STRING);
     closedir(dir);
-  } else if (ENOENT == errno) {
-    /* Directory does not exist. */
-  } else {
-    /* opendir() failed for some other reason. */
+
+    return;
   }
+  
+  /* Directory exists. */
+  if (dir) {
+    sprintf(delete_folder_command, "rm -rf %s", db_path);
+    printf("delete folder command: %s\n", delete_folder_command);
+
+    remove_user_db_access(db_name);
+    system(delete_folder_command);
+
+    sprintf(message, "dataabse `%s` has been dropped", db_name);
+    send_to_client(message, STRING);
+  } else {
+    strcpy(message, "Open directory failed for some other reason...");
+    send_to_client(message, STRING);
+  }
+
+  closedir(dir);
+}
+
+void drop_table_handler(char* request) {
+  // 1. cek koneksi apakah null atau tidak
+  // 2. lakukan delete file
+
+  int response_code = DROP_TABLE;
+
+  char request_token[3][100];
+  char table_path[PATH_MAX];
+  char table_name[50];
+  char message[50];
+
+  send_to_client(&response_code, INTEGER);
+
+  // In case user has not been connected to a database
+  if (strcmp(active_db, "") == 0) {
+    strcpy(message, "Connect to a database first");
+    send_to_client(message, STRING);
+
+    return;
+  }
+
+  split_string(request_token, request, " ;");
+  strcpy(table_name, request_token[2]);
+  sprintf(table_path, "./database/databases/%s/%s.csv", active_db, table_name);
+
+  // In case table does not exist
+  if (access(table_path, F_OK) != 0) {
+    sprintf(message, "Table `%s` does not exist.", table_name);
+    send_to_client(message, STRING);
+
+    return;
+  }
+
+  remove(table_path);
+  sprintf(message, "Table `%s` was dropped.", table_name);
+  send_to_client(message, STRING);
 }
 
 void drop_column_handler(char* request) {
@@ -985,7 +1028,7 @@ void select_handler(char* request) {
       strcpy(selected[it1], splitted_column[indexes[it1]]);
     }
     bzero(data_to_send, 0);
-    join_string(data_to_send, selected, "\t|\t");
+    parse_to_client(data_to_send, selected);
     printf("%s\n", data_to_send);
     send_to_client(data_to_send, STRING); //send value
     // }
@@ -1003,6 +1046,34 @@ void handle_select_where() {
 }
 
 /* Helper functions */
+void remove_user_db_access(char* db_name) {
+  FILE* users_table_read = fopen("./database/databases/db_user/users.csv", "r");
+  FILE* users_table_write = fopen("./database/databases/db_user/new-users.csv", "w");
+
+  char record[256];
+  char new_record[256];
+
+  while (fgets(record, 256, users_table_read)) {
+    char column[3][100];
+    
+    record[strcspn(record, "\n")] = 0;
+
+    split_string(column, record, ",");
+
+    if (strcmp(column[2], db_name) == 0) continue;
+
+    // TODO: masih salah fputs
+    sprintf(new_record, "%s,%s,%s\n", column[0], column[1], column[2]);
+    fputs(new_record, users_table_write);
+  }
+
+  fclose(users_table_write);
+  fclose(users_table_read);
+
+  remove("./database/databases/db_user/users.csv");
+  rename("./database/databases/db_user/new-users.csv", "./database/databases/db_user/users.csv");
+}
+
 void get_user_password(char* password, const char* username) {
   char record[256];
   FILE* users_table = fopen("./database/databases/db_user/users.csv", "r");
@@ -1194,9 +1265,107 @@ int join_string (char dest[], char splitted[][100], const char delimiter[]) {
   return i;
 }
 
+/* return size of splitted[][100]
+*  parse the data in table. 
+*  if the data is too long, it'll be cut. 
+*  per column only 15 words or equal to 4 tabs
+*/
+int parse_to_client (char dest[], char splitted[][100]) {
+  int i = 0;
+  // bzero(dest, 0);
+  strcpy(dest, "|");
+  while (strcmp(splitted[i], "") != 0) {
+    // strcat(dest, delimiter);
+    if (strlen(splitted[i]) > 11) {
+      char subbuff[15];
+      subset(subbuff, splitted[i], 13);
+      strcat(dest, subbuff);
+      strcat(dest, "\t");
+    } else if (strlen(splitted[i]) > 7) {
+      strcat(dest, splitted[i]);
+      strcat(dest, "\t");
+    } else if (strlen(splitted[i]) > 3) {
+      strcat(dest, splitted[i]);
+      strcat(dest, "\t");
+      strcat(dest, "\t");
+    } else {
+      strcat(dest, splitted[i]);
+      strcat(dest, "\t");
+      strcat(dest, "\t");
+    }
+    strcat(dest, "|");
+    i++;
+  }
+  return i;
+}
+
+/* char* sub (char buff[], int len) 
+*   buff : source
+*   len  : limit length
+*/
+char* subset (char subbuff[], char buff[], int len) {
+  memcpy(subbuff, buff, len);
+  subbuff[len-1] = '.';
+  subbuff[len-2] = '.';
+  subbuff[len-3] = '.';
+  return subbuff;
+}
+
 void to_lower (char *str) {    
   for (int i = 0; str[i]; i++) {
     str[i] = tolower(str[i]);
   }
+  return;
+}
+
+void reliability_handler (char path_to_reli[]) {
+  
+}
+
+void reliability_table_handler (char path_to_reli[], char path_to_table[], char table_name[]) {
+
+  char output[200];
+
+  /*buat table dan kolom*/
+  char c_name[100];
+  char c_type[100];
+  char c_name_splitted[50][100];
+  char c_type_splitted[50][100];
+  char c_name_type_out[200];
+
+  /**buat value nya*/
+  char value[200];
+
+  /*open file*/
+  FILE* reli_file = fopen(path_to_reli, "a");
+  FILE* table_read = fopen(path_to_table, "r");
+
+  /*outputkan drop table ke file reliability*/
+  sprintf(output, "DROP TABLE %s;\n", table_name);
+  fputs(output, reli_file);
+
+  fgets(c_name, 100, table_read);
+  fgets(c_type, 100, table_read);
+  int end = split_string(c_name_splitted, c_name, ",");
+  split_string(c_type_splitted, c_type, ",");
+
+  for (int it = 0; it < end; it++) {
+    strcat(c_name_type_out, c_name_splitted[it]);
+    strcat(c_name_type_out, c_type_splitted[it]);
+    if (it != end - 1) strcat(c_name_type_out, ",");
+  }
+
+  /*buat table beserta kolomnya ke file reliabiliy*/
+  sprintf(output, "CREATE TABLE table1 (%s);\n\n", c_name_type_out);
+  fputs(output, reli_file);
+
+  /*buat insert value ke file reliability*/
+  for (int i = 0; fgets(value, 200, table_read); i++) {
+    sprintf(output, "INSERT INTO %s (%s);\n", table_name, value);
+    fputs(output, reli_file);
+  }
+
+  fclose(table_read);
+  fclose(reli_file);
   return;
 }
