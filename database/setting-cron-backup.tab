@@ -1,0 +1,1 @@
+0 * * * * (cd /Users/riza/Documents/A-Kuliah/6-Sistem-Operasi/Praktikum/fp/client/; bash ./dump-client -u jack -p jack123 database1 > database1.backup)
