@@ -39,6 +39,8 @@
 #define DELETE 302
 #define SELECT 303
 
+#define RELIABILITY 500
+
 int client_socket;
 bool is_root;
 bool keep_handling;
@@ -48,7 +50,7 @@ char active_db[50];
 
 typedef struct sockaddr_in SA_IN;
 typedef struct sockaddr SA;
-typedef struct where_t{
+typedef struct where_t {
   bool on;
   char asked_column[100];
   int table_column_index;
@@ -80,6 +82,9 @@ void update_handler(char* );
 void delete_handler(char* );
 void select_handler(char* );
 
+void reliability_handler(char* );
+void reliability_table_handler(char*, char* );
+
 /* Helper functions */
 void remove_user_db_access(char* );
 void get_user_password(char*, const char* );
@@ -93,6 +98,8 @@ int join_string (char[], char[][100], const char[]);
 int parse_to_client (char dest[], char splitted[][100]);
 char* subset (char subbuff[], char buff[], int len);
 void to_lower (char *str);
+int where_handler(where_t* condition, char column[], char value[], char record_column[][100], int total_column);
+bool select_column_handler (where_t* condition, char selected[][100], char splitted[][100], int indexes[], int len);
 
 int main(int argc, char const *argv[]) {
   int server_socket = setup_server(SERVER_PORT, BACKLOG);
@@ -225,6 +232,10 @@ void handle_connection(int client_socket) {
         select_handler(request);
         break;
 
+      case RELIABILITY:
+        reliability_handler(request);
+        break;
+
       default: 
         printf("Invalid request!\n"); 
         break;
@@ -254,6 +265,7 @@ int translate_request(const char* request) {
   if (strcmp(token1, "drop") == 0 && strcmp(token2, "table") == 0) return DROP_TABLE;
   if (strcmp(token1, "drop") == 0 && strcmp(token2, "column") == 0) return DROP_COLUMN;
 
+  if (strcmp(token1, "reliability") == 0) return RELIABILITY;
   if (strcmp(token1, "use") == 0) return CONNECT_DB;
   if (strcmp(token1, "grant") == 0) return GRANT_PERMISSION;
   if (strcmp(token1, "insert") == 0) return INSERT;
@@ -988,22 +1000,12 @@ void select_handler(char* request) {
       }
     }
   }
-
-  /*
+  
   where_t condition;
   condition.on = false;
   if (strcmp(splitted[i + 3], "where") == 0) {
-    condition.on = true;
-    strcpy(condition.asked_column, splitted[i + 4]);
-    strcpy(condition.value, splitted[i + 5]);
-    for (int it1 = 0; it1 <= total_columns; it1++) {
-      if (strcmp(condition.asked_column, record_column[it1]) == 0) {
-        condition.table_column_index = it1;
-        break;
-      }
-    }
+    where_handler(&condition, splitted[i + 4], splitted[i + 5], record_column, total_columns);
   }
-  */
   
   //send nama kolom
   bool keep_writing = false; //status to for client to keep read from server
@@ -1015,6 +1017,7 @@ void select_handler(char* request) {
     char cpy_columns[500];
     char splitted_column[50][100];
     char selected[50][100];
+    bool send_it;
     
     columns[strcspn(columns, "\n")] = 0;
     strcpy(cpy_columns, columns);
@@ -1023,31 +1026,24 @@ void select_handler(char* request) {
     send_to_client(&keep_writing, BOOLEAN);
     if (!keep_writing) break;
 
-    // if (condition.on && send_column != 0) {
-    //   handle_select_where(condition, );
-    // }
-    /* ambil yang diminta, taruh di char selected[50][100]
-    if (condition.on || send_column != 0) {
-      if (strcmp(splitted_column[condition.table_column_index], condition.value) == 0) { //if value match
-        for (int it1 = 0; it1 < it3; it1++) {
-          strcpy(selected[it1], splitted_column[indexes[it1]]);
-          printf("test-case-100\n");
-        }
-        printf("test-case-10\n");
-        join_string(data_to_send, selected, "\t");
-        printf("test-case-11\n");
-
-        send_to_client(columns, STRING); //send value
-      }
-    } else {*/
-    for (int it1 = 0; it1 < it3; it1++) {
-      strcpy(selected[it1], splitted_column[indexes[it1]]);
+    /* jika row pertama maka select nama kolom */
+    if (send_column == 0) {
+      bool temp = condition.on;
+      condition.on = false;
+      send_it = select_column_handler(&condition, selected, splitted_column, indexes, it3);
+      condition.on = temp;
+    } else {
+      send_it = select_column_handler(&condition, selected, splitted_column, indexes, it3);
     }
-    bzero(data_to_send, 0);
-    parse_to_client(data_to_send, selected);
-    printf("%s\n", data_to_send);
-    send_to_client(data_to_send, STRING); //send value
-    // }
+    
+    if (send_it) {
+      bzero(data_to_send, 0);
+      parse_to_client(data_to_send, selected);
+      printf("%s\n", data_to_send);
+      send_to_client(data_to_send, STRING);
+    } else {
+      printf("a row skipped\n");
+    }
     
     send_column++;
   } while (keep_writing);
@@ -1126,6 +1122,7 @@ bool authenticate_user() {
   if (is_root) {
     strcpy(active_user, "root");
     strcpy(active_password, "");
+    
     return true;
   }
 
@@ -1334,25 +1331,49 @@ void to_lower (char *str) {
   return;
 }
 
-void reliability_handler (char path_to_reli[], char request_db[]) {
+
+//test reliability
+void reliability_handler (char* request) {
+  keep_handling = false;
+  // ./databasedump -u jack -p jack123 database1 > database1.backup
+  bool db_exists = false;
+  char request_db[50];
+  char request_splitted[2][100];
+  char error_message[] = "db is not existed\n";
+  int end = split_string(request_splitted, request, " ");
+
+  strcpy(request_db, request_splitted[1]);
+
   DIR *db_dir;
   struct dirent *dir;
   char path_to_db[100];
-  sprintf(path_to_db, "./databases/%s", request_db);
+  sprintf(path_to_db, "./database/databases/%s", request_db);
   db_dir = opendir(path_to_db);
+
+  db_exists = db_dir ? true : false;
+  send_to_client(&db_exists, BOOLEAN);
+
+  printf("exist ? %d\n", (int) db_exists);
+
   if (db_dir) {
-      while ((dir = readdir(db_dir)) != NULL) {
-        // printf("%s\n", dir->d_name);
-        char path_to_table[100];
-        sprintf(path_to_table, "%s/%s", path_to_db, dir->d_name);
-        reliability_table_handler(path_to_reli, path_to_table, dir->d_name);
-      }
-      closedir(db_dir);
+    printf("db_dir itu truth\n");
+    while ((dir = readdir(db_dir)) != NULL) {
+      if (strcmp(dir->d_name, ".") == 0 || strcmp(dir->d_name, "..") == 0) continue;
+      char path_to_table[100];
+      printf("%s\n", dir->d_name);
+      sprintf(path_to_table, "%s/%s", path_to_db, dir->d_name);
+      reliability_table_handler(path_to_table, dir->d_name);
+    }
+    
+    printf("Hampir selesai\n");
+    closedir(db_dir);
   }
+
+  printf("Selesai\n");
 }
 
-void reliability_table_handler (char path_to_reli[], char path_to_table[], char table_name[]) {
-
+void reliability_table_handler (char* path_to_table, char* table_name) {
+  bool keep_reading = true;
   char output[200];
 
   /*buat table dan kolom*/
@@ -1366,35 +1387,78 @@ void reliability_table_handler (char path_to_reli[], char path_to_table[], char 
   char value[200];
 
   /*open file*/
-  FILE* reli_file = fopen(path_to_reli, "a");
+  // FILE* reli_file = fopen(path_to_reli, "a");
+  
   FILE* table_read = fopen(path_to_table, "r");
 
   /*outputkan drop table ke file reliability*/
   sprintf(output, "DROP TABLE %s;\n", table_name);
-  fputs(output, reli_file);
+
+  send_to_client(&keep_reading, BOOLEAN);
+  send_to_client(output, STRING);
+  // fputs(output, reli_file);
 
   fgets(c_name, 100, table_read);
   fgets(c_type, 100, table_read);
-  int end = split_string(c_name_splitted, c_name, ",");
-  split_string(c_type_splitted, c_type, ",");
+  int end = split_string(c_name_splitted, c_name, ",\n");
+  split_string(c_type_splitted, c_type, ",\n");
 
   for (int it = 0; it < end; it++) {
     strcat(c_name_type_out, c_name_splitted[it]);
+    strcat(c_name_type_out, " ");
     strcat(c_name_type_out, c_type_splitted[it]);
     if (it != end - 1) strcat(c_name_type_out, ",");
   }
 
   /*buat table beserta kolomnya ke file reliabiliy*/
   sprintf(output, "CREATE TABLE table1 (%s);\n\n", c_name_type_out);
-  fputs(output, reli_file);
+  send_to_client(&keep_reading, BOOLEAN);
+  send_to_client(output, STRING);
+  // fputs(output, reli_file);
 
   /*buat insert value ke file reliability*/
   for (int i = 0; fgets(value, 200, table_read); i++) {
+    value[strcspn(value, "\n")] = 0;
     sprintf(output, "INSERT INTO %s (%s);\n", table_name, value);
-    fputs(output, reli_file);
+    send_to_client(&keep_reading, BOOLEAN);
+    send_to_client(output, STRING);
+    // fputs(output, reli_file);
   }
 
+  keep_reading = false;
+  send_to_client(&keep_reading, BOOLEAN);
+
   fclose(table_read);
-  fclose(reli_file);
+  // fclose(reli_file);
   return;
+}
+
+// search index kolom
+int where_handler(where_t* condition, char column[], char value[], char record_column[][100], int total_column) {
+  condition->on = true;
+  strcpy(condition->asked_column, column);
+  strcpy(condition->value, value);
+  for (int it1 = 0; it1 < total_column; it1++) {
+    if (strcmp(condition->asked_column, record_column[it1]) == 0) {
+      condition->table_column_index = it1;
+      break;
+    }
+  }
+  return condition->table_column_index;
+}
+
+// select_column_handler(&condition, selected, splitted_column, indexes, it3);
+bool select_column_handler (where_t* condition, char selected[][100], char splitted[][100], int indexes[], int len) {
+  if (condition->on){
+    if (strcmp(condition->value, splitted[condition->table_column_index]) == 0) {
+      for (int it1 = 0; it1 < len; it1++) {
+        strcpy(selected[it1], splitted[ indexes[ it1 ] ]);
+      } return true;
+    } else return false;
+  } else {
+    for (int it1 = 0; it1 < len; it1++) {
+      strcpy(selected[it1], splitted[ indexes[ it1 ]]);
+    } 
+    return true;
+  }
 }
