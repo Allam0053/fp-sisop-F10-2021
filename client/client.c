@@ -17,6 +17,7 @@
 #define INTEGER 2
 #define STRING 3
 
+#define RESPONSE_ERR -2
 #define REJECTED -1
 #define FINISHED 0
 
@@ -156,6 +157,7 @@ void handle_connection(char* user, char* password) {
       case INSERT:
       case UPDATE:
       case DELETE:
+      case RESPONSE_ERR:
         read_from_server(message, sizeof(message), STRING);
         printf("%s\n", message);
         break;
@@ -207,7 +209,7 @@ void select_handler() {
   read_from_server(&status, sizeof(status), INTEGER);
 
   if (status == REJECTED) {
-    printf("Cannot perform SELECT\n");
+    printf("Table does not exist!\n");
     return;
   }
   
@@ -217,6 +219,7 @@ void select_handler() {
     if (!keep_reading) break;
 
     read_from_server(record, sizeof(record), STRING);
+
     printf("%s\n", record);
   } while (keep_reading);
 }
