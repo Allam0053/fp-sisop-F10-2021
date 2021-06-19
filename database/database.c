@@ -495,13 +495,7 @@ void create_db_handler(char* request) {
     return;
   }
   
-  // create db
-  sprintf(new_db_path, "%s%s", "./database/databases/", request_token[2]);
-  if (!mkdir(new_db_path, 0777)) {
-    strcpy(message, "DB already exist / create fail");
-    send_to_client(message, STRING);
-    return;
-  }
+  mkdir(new_db_path, 0777);
 
   // Give this new db access to that user
   users_table = fopen("./database/databases/db_user/users.csv", "a");
